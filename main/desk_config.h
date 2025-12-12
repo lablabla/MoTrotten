@@ -17,8 +17,9 @@
 #define PIN_MOTOR_R_EN      GPIO_NUM_21 // Down Enable
 
 // I2C Bus (VL53L0X & INA219)
-#define PIN_I2C_SDA         GPIO_NUM_23
-#define PIN_I2C_SCL         GPIO_NUM_22
+#define PIN_I2C_SDA         GPIO_NUM_4
+#define PIN_I2C_SCL         GPIO_NUM_5
+#define I2C_ADDR_INA219     0x40
 
 // UI Buttons
 #define PIN_BTN_UP          GPIO_NUM_32
