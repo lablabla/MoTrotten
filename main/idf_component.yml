@@ -1,7 +1,6 @@
 dependencies:
-
-
   esp-idf-lib/ina219: '*'
   espp/vl53l: '*'
   espp/i2c: '*'
   espp/logger: '*'
+  lvgl/lvgl: "^8.3"

@@ -24,8 +24,18 @@
 // UI Buttons
 #define PIN_BTN_UP          GPIO_NUM_32
 #define PIN_BTN_DOWN        GPIO_NUM_33
-#define PIN_BTN_PRESET_1    GPIO_NUM_25 // Standing Height
+#define PIN_BTN_PRESET_1    GPIO_NUM_27 // Standing Height
 #define PIN_BTN_PRESET_2    GPIO_NUM_26 // Sitting Height
+
+// --- DISPLAY PINS (ST7789) ---
+#define PIN_DISP_SPI_HOST   SPI2_HOST
+#define PIN_DISP_SPI_MISO   -1 // MISO not used
+#define PIN_DISP_SPI_MOSI   GPIO_NUM_35
+#define PIN_DISP_SPI_SCLK   GPIO_NUM_36
+#define PIN_DISP_SPI_CS     GPIO_NUM_34
+#define PIN_DISP_DC         GPIO_NUM_37
+#define PIN_DISP_RST        GPIO_NUM_38
+#define PIN_DISP_BCKL       -1 // Backlight is not controlled by a dedicated pin
 
 // --- SAFETY & LIMITS ---
 #define DESK_MIN_HEIGHT_MM  650   // Lowest physical height

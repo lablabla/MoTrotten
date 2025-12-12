@@ -185,11 +185,19 @@ dependencies:
     source:
       type: idf
     version: 5.5.0
+  lvgl/lvgl:
+    component_hash: d7c1ac037ae6e85d94897f807d6e7ba0946a83e720074fc95a4f6241da9f9f53
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 8.4.0
 direct_dependencies:
 - esp-idf-lib/ina219
 - espp/i2c
 - espp/logger
 - espp/vl53l
-manifest_hash: 62ea2a4073d2cea8730890c19477d5580e009e125d1b314acc81fa9ff2be361a
+- lvgl/lvgl
+manifest_hash: 7a5b8d7ce45061106826c0c7b75aad683b5ef84e3b05455c2c7eb5c772eac655
 target: esp32s3
 version: 2.0.0
