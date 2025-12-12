@@ -75,7 +75,9 @@ DisplayManager::DisplayManager() {
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     // NOTE: Backlight is not controlled, assumed to be always on.
 
@@ -89,8 +91,8 @@ DisplayManager::DisplayManager() {
 
     // Initialize LVGL display driver
     lv_disp_drv_init(&disp_drv_);
-    disp_drv_.hor_res = 240;
-    disp_drv_.ver_res = 320;
+    disp_drv_.hor_res = 320;
+    disp_drv_.ver_res = 240;
     disp_drv_.flush_cb = lvgl_flush_cb;
     disp_drv_.draw_buf = &disp_buf_;
     disp_drv_.user_data = panel_handle;

@@ -32,7 +32,7 @@
 #define PIN_DISP_SPI_MISO   -1 // MISO not used
 #define PIN_DISP_SPI_MOSI   GPIO_NUM_35
 #define PIN_DISP_SPI_SCLK   GPIO_NUM_36
-#define PIN_DISP_SPI_CS     GPIO_NUM_34
+#define PIN_DISP_SPI_CS     GPIO_NUM_39
 #define PIN_DISP_DC         GPIO_NUM_37
 #define PIN_DISP_RST        GPIO_NUM_38
 #define PIN_DISP_BCKL       -1 // Backlight is not controlled by a dedicated pin
