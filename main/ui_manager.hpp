@@ -1,5 +1,8 @@
 #pragma once
 
+#include <vector>
+#include <functional>
+
 #include "lvgl.h"
 
 // Enum to define which test to run
@@ -28,12 +31,17 @@ public:
     // STOP ANIMATION
     void stop_move_animation();
 
+    void play_startup_animation(std::function<void()> on_complete);
+
 private:
     void init_styles();
     void configure_and_start_animation(const char* symbol);
 
     // Animation helpers
     static void arrow_animation_cb(void *var, int32_t v);
+    static void anim_opa_cb(void* var, int32_t v);
+    static void startup_sequence_end_cb(lv_anim_t* a);
+    static void final_cleanup_cb(lv_anim_t* a);
     void start_arrow_animation(lv_obj_t* arrow, bool up);
     void update_height_text(float height);
 
@@ -53,10 +61,15 @@ private:
     lv_anim_t up_down_anim_;      // Handle to control the animation
     bool is_animating_ = false;   // State tracker
 
+    lv_obj_t* startup_container_;
+    std::vector<lv_obj_t*> letter_labels_;
+    std::function<void()> on_startup_finish_;
+    
+
     // Styles for the cyan color effect
     lv_style_t style_cyan_bright_;
     lv_style_t style_cyan_medium_;
-    
+
     lv_style_t style_cyan_light_;
 #ifdef CONFIG_LV_COLOR_16_SWAP // If 16-bit color with byte swap is enabled, cyan is red and vice versa
     lv_color_t cyan = lv_palette_main(LV_PALETTE_RED);

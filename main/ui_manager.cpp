@@ -11,9 +11,11 @@ UIManager::UIManager() {
 
     // Create the shared UI elements
     height_label_ = lv_label_create(lv_scr_act());
+    lv_obj_add_flag(height_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_style(height_label_, &style_big_text_, 0);
 
     unit_label_ = lv_label_create(lv_scr_act());
+    lv_obj_add_flag(unit_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_style(unit_label_, &style_small_text_, 0);
     lv_label_set_text(unit_label_, "cm");
 
@@ -235,4 +237,116 @@ void UIManager::update_height_text(float height) {
     // Dynamic unit label position
     lv_coord_t x_offset = height > 100.0 ? -95 : -110;
     lv_obj_align(unit_label_, LV_ALIGN_BOTTOM_RIGHT, x_offset, -95);
+}
+
+void UIManager::anim_opa_cb(void* var, int32_t v) {
+    // Cast the raw pointer back to an LVGL object
+    lv_obj_t* obj = (lv_obj_t*)var;
+    // Set the text opacity style property based on the animation value (v)
+    lv_obj_set_style_text_opa(obj, (lv_opa_t)v, 0);
+}
+
+void UIManager::startup_sequence_end_cb(lv_anim_t* a) {
+    UIManager* mgr = (UIManager*)a->user_data;
+    
+    // Get the container (parent of the last letter)
+    lv_obj_t* last_letter = (lv_obj_t*)a->var;
+    lv_obj_t* container = lv_obj_get_parent(last_letter);
+
+    for(auto* lbl : mgr->letter_labels_) {
+        lv_obj_remove_local_style_prop(lbl, LV_STYLE_TEXT_OPA, 0);
+    }
+
+    // Create manual Fade Out animation
+    lv_anim_t fade_anim;
+    lv_anim_init(&fade_anim);
+    lv_anim_set_var(&fade_anim, container);
+    lv_anim_set_exec_cb(&fade_anim, anim_opa_cb); // Use the same OPA helper
+    lv_anim_set_values(&fade_anim, LV_OPA_COVER, LV_OPA_TRANSP); // Fade to transparent
+    lv_anim_set_time(&fade_anim, 500);
+    lv_anim_set_delay(&fade_anim, 1000); // Wait 1 second before fading out
+    
+    // Pass 'mgr' to the final callback
+    fade_anim.user_data = (void*)mgr;
+    lv_anim_set_ready_cb(&fade_anim, final_cleanup_cb);
+    
+    lv_anim_start(&fade_anim);
+}
+
+void UIManager::final_cleanup_cb(lv_anim_t* a) {
+    UIManager* mgr = (UIManager*)a->user_data;
+    lv_obj_t* container = (lv_obj_t*)a->var;
+    
+    // Delete the UI elements
+    lv_obj_del(container);
+    
+    // Fire the user's callback
+    if (mgr->on_startup_finish_) {
+        mgr->on_startup_finish_();
+    }
+}
+
+void UIManager::play_startup_animation(std::function<void()> on_complete) {
+    this->on_startup_finish_ = on_complete;
+    const char* text = "MoTrotten";
+    
+    // 1. Create a container to align letters horizontally
+    startup_container_ = lv_obj_create(lv_scr_act());
+    lv_obj_remove_style_all(startup_container_); // Invisible container
+    lv_obj_set_size(startup_container_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_center(startup_container_);
+    
+    // Use a flex layout to automatically stack letters horizontally
+    lv_obj_set_flex_flow(startup_container_, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(startup_container_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // Add a little space between letters (optional)
+    lv_obj_set_style_pad_column(startup_container_, 2, 0);
+
+    // 2. Create individual labels for each letter
+    int len = strlen(text);
+    letter_labels_.clear(); // Ensure vector is empty
+
+    for(int i = 0; i < len; i++) {
+        lv_obj_t* lbl = lv_label_create(startup_container_);
+        // Set text to a single character
+        lv_label_set_text_fmt(lbl, "%c", text[i]);
+        
+        // Use a nice big font and color
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_48, 0);
+        // Use the cyan color you like (or white)
+        lv_obj_set_style_text_color(lbl, cyan, 0);
+        
+        // IMPORTANT: Start completely transparent
+        lv_obj_set_style_text_opa(lbl, LV_OPA_TRANSP, 0);
+
+        letter_labels_.push_back(lbl);
+    }
+
+
+    // 3. Create staggered animations
+    for(int i = 0; i < len; i++) {
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, letter_labels_[i]);
+        // Use our static helper function
+        lv_anim_set_exec_cb(&a, anim_opa_cb);
+
+        // Animate Opacity from Transparent (0) to Covered (255)
+        lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+        lv_anim_set_time(&a, 800); // Fade duration for one letter
+
+        // THE KEY TRICK: Staggered Delays
+        // Delay increases by 150ms for each subsequent letter
+        lv_anim_set_delay(&a, i * 150); 
+        
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+
+        // If this is the very last letter, attach the cleanup callback
+        if (i == len - 1) {
+            a.user_data = (void*)this;
+            lv_anim_set_ready_cb(&a, startup_sequence_end_cb);
+        }
+
+        lv_anim_start(&a);
+    }
 }

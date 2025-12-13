@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
+#include <chrono>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
@@ -272,28 +273,33 @@ void control_task(void *pvParameters) {
 void gui_task(void *pvParameters) {
     static espp::Logger logger({.tag = "GuiTask", .level = espp::Logger::Verbosity::INFO});
     logger.info("GUI Task Started.");
-    
+    std::atomic<bool> gui_initialized(false);
     DisplayManager display;
     UIManager ui;
-
+    ui.play_startup_animation([&]() {
+      printf("Startup Animation Complete! Showing Main Screen...\n");
+      gui_initialized = true;
+    });
     while(1) {
+      if (gui_initialized.load())
+      {
         switch (UI_TEST_MODE) {
-            case UITest::IDLE:
-                ui.test_idle_animation();
-                break;
-            case UITest::MANUAL_MOVE_UP:
-                ui.test_manual_move_animation(true);
-                break;
-            case UITest::MANUAL_MOVE_DOWN:
-                ui.test_manual_move_animation(false);
-                break;
-            case UITest::PRESET_MOVE:
-                ui.test_preset_move_animation();
-                break;
+          case UITest::IDLE:
+              ui.test_idle_animation();
+              break;
+          case UITest::MANUAL_MOVE_UP:
+              ui.test_manual_move_animation(true);
+              break;
+          case UITest::MANUAL_MOVE_DOWN:
+              ui.test_manual_move_animation(false);
+              break;
+          case UITest::PRESET_MOVE:
+              ui.test_preset_move_animation();
+              break;
         }
-
-        lv_timer_handler(); // Handle LVGL tasks
-        vTaskDelay(pdMS_TO_TICKS(50)); // Slower delay for tests
+      }
+      lv_timer_handler(); // Handle LVGL tasks
+      vTaskDelay(pdMS_TO_TICKS(50)); // Slower delay for tests
     }
 }
 
