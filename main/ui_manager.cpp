@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 UIManager::UIManager() {
+    lv_obj_clear_flag(lv_scr_act(), LV_OBJ_FLAG_SCROLLABLE);
     // Initialize styles
     lv_style_init(&style_big_text_);
     lv_style_set_text_font(&style_big_text_, &lv_font_montserrat_48);
@@ -18,17 +19,6 @@ UIManager::UIManager() {
     lv_obj_add_flag(unit_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_style(unit_label_, &style_small_text_, 0);
     lv_label_set_text(unit_label_, "cm");
-
-    progress_bar_ = lv_bar_create(lv_scr_act());
-    lv_obj_set_size(progress_bar_, 200, 20);
-    lv_obj_center(progress_bar_);
-    lv_obj_align(progress_bar_, LV_ALIGN_LEFT_MID, 50, 50);
-
-    static lv_style_t style_indic;
-    lv_style_init(&style_indic);
-    lv_style_set_bg_opa(&style_indic, LV_OPA_COVER);
-    lv_style_set_bg_color(&style_indic, cyan);
-    lv_obj_add_style(progress_bar_, &style_indic, LV_PART_INDICATOR);
 
     init_styles();
 
@@ -54,15 +44,9 @@ UIManager::UIManager() {
     
     // Initialize animation struct to zero to avoid garbage data
     lv_memset_00(&up_down_anim_, sizeof(lv_anim_t));
-
-    // Initially hide elements that are not part of the idle screen
-    lv_obj_add_flag(progress_bar_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void UIManager::test_idle_animation() {
-    lv_obj_clear_flag(height_label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(unit_label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(progress_bar_, LV_OBJ_FLAG_HIDDEN);
 
     static float height = 95.0;
     height += 0.1;
@@ -73,27 +57,18 @@ void UIManager::test_idle_animation() {
 }
 
 void UIManager::test_manual_move_animation(bool is_moving_up) {
+    static float height = 95.0;
     if (is_moving_up) {
+        height += 0.1;
+        if (height > 105.0) height = 95.0;
         start_move_up_animation();
-    } else {
+    } else {        
+        height -= 0.1;
+        if (height < 95.0) height = 105.0;
         start_move_down_animation();
     }
     
-    static float height = 95.0;
     update_height_text(height);
-}
-
-void UIManager::test_preset_move_animation() {
-    lv_obj_clear_flag(height_label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(unit_label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(progress_bar_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(arrow_container_, LV_OBJ_FLAG_HIDDEN);
-    
-    static int progress = 0;
-    progress = (progress + 1) % 101;
-    lv_bar_set_value(progress_bar_, progress, LV_ANIM_ON);
-
-    update_height_text(95.0 + (progress / 100.0) * 10.0);
 }
 
 void UIManager::init_styles() {
@@ -114,6 +89,12 @@ void UIManager::init_styles() {
     lv_style_set_text_color(&style_cyan_light_, cyan);
     lv_style_set_text_opa(&style_cyan_light_, LV_OPA_30);    // 30% opaque
     lv_style_set_text_font(&style_cyan_light_, arrow_font);
+}
+
+void UIManager::show_idle_state(float height) {
+    stop_move_animation();
+
+    update_height_text(height);
 }
 
 void UIManager::start_move_up_animation() {
@@ -165,7 +146,7 @@ void UIManager::configure_and_start_animation(const char* symbol) {
     // 2. Determine Direction Physics
     int32_t start_y, end_y;
     
-    lv_coord_t arrows_offset = 90;
+    lv_coord_t arrows_offset = 100;
     if (strcmp(symbol, LV_SYMBOL_UP) == 0) {
         lv_obj_align(main_arrow_lbl_,    LV_ALIGN_CENTER, arrows_offset, -25); // Top
         lv_obj_align(trail_arrow_1_lbl_, LV_ALIGN_CENTER, arrows_offset, 0);   // Middle
@@ -227,6 +208,8 @@ void UIManager::start_arrow_animation(lv_obj_t* arrow, bool up) {
 }
 
 void UIManager::update_height_text(float height) {
+    lv_obj_clear_flag(height_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(unit_label_, LV_OBJ_FLAG_HIDDEN);
     char buf[20];
     snprintf(buf, sizeof(buf), "%.1f", height);
     lv_label_set_text(height_label_, buf);

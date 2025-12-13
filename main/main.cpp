@@ -31,8 +31,7 @@ static std::atomic<bool>     g_is_moving(false);
 // CHOOSE YOUR TEST
 // #define UI_TEST_MODE UITest::IDLE
 // #define UI_TEST_MODE UITest::MANUAL_MOVE_UP
-// #define UI_TEST_MODE UITest::MANUAL_MOVE_DOWN
-#define UI_TEST_MODE UITest::PRESET_MOVE
+#define UI_TEST_MODE UITest::MANUAL_MOVE_DOWN
 
 /*
 // --- NVS Helper Functions ---
@@ -276,10 +275,10 @@ void gui_task(void *pvParameters) {
     std::atomic<bool> gui_initialized(false);
     DisplayManager display;
     UIManager ui;
-    ui.play_startup_animation([&]() {
-      printf("Startup Animation Complete! Showing Main Screen...\n");
+    // ui.play_startup_animation([&]() {
+    //   printf("Startup Animation Complete! Showing Main Screen...\n");
       gui_initialized = true;
-    });
+    // });
     while(1) {
       if (gui_initialized.load())
       {
@@ -292,9 +291,6 @@ void gui_task(void *pvParameters) {
               break;
           case UITest::MANUAL_MOVE_DOWN:
               ui.test_manual_move_animation(false);
-              break;
-          case UITest::PRESET_MOVE:
-              ui.test_preset_move_animation();
               break;
         }
       }

@@ -10,7 +10,6 @@ enum class UITest {
     IDLE,
     MANUAL_MOVE_UP,
     MANUAL_MOVE_DOWN,
-    PRESET_MOVE
 };
 
 class UIManager {
@@ -20,15 +19,10 @@ public:
     // Test functions
     void test_idle_animation();
     void test_manual_move_animation(bool is_moving_up);
-    void test_preset_move_animation();
 
-    // START ANIMATION: Moving UP
+    void show_idle_state(float height);
     void start_move_up_animation();
-
-    // START ANIMATION: Moving DOWN
     void start_move_down_animation();
-
-    // STOP ANIMATION
     void stop_move_animation();
 
     void play_startup_animation(std::function<void()> on_complete);
@@ -51,7 +45,6 @@ private:
 
     lv_obj_t *height_label_;
     lv_obj_t *unit_label_;
-    lv_obj_t *progress_bar_;
 
     lv_obj_t* arrow_container_;   // The invisible box holding the arrows
     lv_obj_t* main_arrow_lbl_;    // The bright, front arrow
