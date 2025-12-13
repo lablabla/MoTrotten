@@ -11,9 +11,11 @@
 #include "nvs.h"
 #include "logger.hpp"
 
+#include "i2c_master.hpp"
+
 
 #include "ina219.h"
-// #include "vl53l.hpp" 
+#include "vl53l.hpp" 
 #include "motor_driver.hpp"
 #include "display_manager.hpp"
 #include "ui_manager.hpp"
@@ -33,7 +35,7 @@ static std::atomic<bool>     g_is_moving(false);
 // #define UI_TEST_MODE UITest::MANUAL_MOVE_UP
 #define UI_TEST_MODE UITest::MANUAL_MOVE_DOWN
 
-/*
+
 // --- NVS Helper Functions ---
 void save_height_preset(const char* key, uint16_t height) {
     nvs_handle_t nvs_handle;
@@ -56,16 +58,62 @@ uint16_t load_height_preset(const char* key, uint16_t default_val) {
 
 // Task for polling sensors
 void sensor_task(void *pvParameters) {
-    // static espp::Logger logger({.tag = "SensorTask", .level = espp::Logger::Verbosity::INFO});
+    static espp::Logger logger({.tag = "SensorTask", .level = espp::Logger::Verbosity::INFO});
 
-    // espp::I2c i2c({
-    //     .port = I2C_NUM_0,
-    //     .sda_io_num = PIN_I2C_SDA,
-    //     .scl_io_num = PIN_I2C_SCL,
-    //     .sda_pullup_en = GPIO_PULLUP_ENABLE,
-    //     .scl_pullup_en = GPIO_PULLUP_ENABLE,
-    //     .clk_speed = 400000 // 400kHz
-    // });
+    espp::I2cMasterBus i2c_bus(espp::I2cMasterBus::Config{
+      .port = I2C_NUM_0,
+      .sda_io_num = PIN_I2C_SDA,
+      .scl_io_num = PIN_I2C_SCL,
+      .clk_speed = 400000, // 400kHz clock speed
+      .enable_internal_pullup = true,
+      .log_level = espp::Logger::Verbosity::INFO,
+    });
+    std::error_code ec;
+    i2c_bus.init(ec);
+    if (ec) {
+        logger.error("Failed to initialize I2C bus: {}", ec.message());
+        vTaskDelete(nullptr);
+        return;
+    }
+    auto vl53l_device = i2c_bus.add_device<uint8_t>(espp::I2cMasterDevice<>::Config{
+        .device_address = espp::Vl53l::DEFAULT_ADDRESS,
+        .timeout_ms = 10,
+        .addr_bit_len = I2C_ADDR_BIT_LEN_7,
+        .scl_speed_hz = 400000,
+        .auto_init = true,
+        .log_level = espp::Logger::Verbosity::INFO,
+    }, ec);
+    if (ec) {
+        logger.error("Failed to add VL53L0X device to I2C bus: {}", ec.message());
+    }
+    else
+    {
+      espp::Vl53l::Config vl53l_config{
+          .device_address = espp::Vl53l::DEFAULT_ADDRESS,
+          .write = [vl53l_device](uint8_t addr, const uint8_t *data, size_t len) {
+              std::error_code ec_inner;
+              auto res = vl53l_device->write(data, len, ec_inner);
+              if (ec_inner)
+              {
+                logger.error("VL53L0X Write Error: {}", ec_inner.message());
+              }
+              return res;
+
+          },
+          .read = [vl53l_device](uint8_t addr, uint8_t *data, size_t len) {
+              std::error_code ec_inner;
+              auto res = vl53l_device->read(data, len, ec_inner);
+              if (ec_inner)
+              {
+                logger.error("VL53L0X Read Error: {}", ec_inner.message());
+              }
+              return res;
+          },
+          .log_level = espp::Logger::Verbosity::WARN,
+        };
+      espp::Vl53l vl53l(vl53l_config);
+    }
+
 
     // // Initialize INA219
     // memset(&ina_dev, 0, sizeof(ina219_t));
@@ -78,13 +126,6 @@ void sensor_task(void *pvParameters) {
     // logger.info("INA219 Initialized");
 
 
-    // espp::Vl53l vl53l(
-    // espp::Vl53l::Config{.device_address = espp::Vl53l::DEFAULT_ADDRESS,
-    //                     .write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1,
-    //                                         std::placeholders::_2, std::placeholders::_3),
-    //                     .read = std::bind(&espp::I2c::read, &i2c, std::placeholders::_1,
-    //                                         std::placeholders::_2, std::placeholders::_3),
-    //                     .log_level = espp::Logger::Verbosity::WARN});
 
     // std::error_code ec;
     // if (!vl53l.set_timing_budget_ms(20, ec)) {
@@ -99,24 +140,24 @@ void sensor_task(void *pvParameters) {
     //     logger.info("VL53L0X Initialized and ranging started.");
     // }
 
-    // while (1) {
-    //     // Read INA219
-    //     float current;
-    //     if (ina219_get_current(&ina_dev, &current) == ESP_OK) {
-    //         g_current_draw_ma = current * 1000.0f; // Convert A to mA
-    //     }
+    while (1) {
+        // // Read INA219
+        // float current;
+        // if (ina219_get_current(&ina_dev, &current) == ESP_OK) {
+        //     g_current_draw_ma = current * 1000.0f; // Convert A to mA
+        // }
 
-    //     // Read VL53L0X
-    //     uint16_t range_mm = vl53l.get_distance_mm(ec);
-    //     if (ec) {
-    //          logger.warn("Failed to get range: {}", ec.message());
-    //     }
-    //     else {
-    //         g_current_height = range_mm;
-    //     }
+        // // Read VL53L0X
+        // uint16_t range_mm = vl53l.get_distance_mm(ec);
+        // if (ec) {
+        //      logger.warn("Failed to get range: {}", ec.message());
+        // }
+        // else {
+        //     g_current_height = range_mm;
+        // }
         
-    //     vTaskDelay(pdMS_TO_TICKS(50));
-    // }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 }
 
 // Task for motor control and logic
@@ -267,7 +308,7 @@ void control_task(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(50)); // Main control loop delay
     }
 }
-*/
+
 
 void gui_task(void *pvParameters) {
     static espp::Logger logger({.tag = "GuiTask", .level = espp::Logger::Verbosity::INFO});
@@ -319,6 +360,6 @@ extern "C" void app_main(void)
     xTaskCreatePinnedToCore(gui_task, "GuiTask", 8192, NULL, 5, NULL, 1);
     
     // Create tasks and pin them to cores
-    // xTaskCreatePinnedToCore(sensor_task, "SensorTask", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(sensor_task, "SensorTask", 4096, NULL, 5, NULL, 0);
     // xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL, 5, NULL, 1);
 }
