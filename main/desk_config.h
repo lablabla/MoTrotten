@@ -12,7 +12,10 @@
 
 // --- PINS (Modify to match your wiring) ---
 // Motor Driver (BTS7960)
-#define PIN_MOTOR_PWM       GPIO_NUM_18
+#define PIN_MOTOR_L_PWM     GPIO_NUM_15
+#define PIN_MOTOR_R_PWM     GPIO_NUM_18
+#define PIN_MOTOR_L_IS      GPIO_NUM_9
+#define PIN_MOTOR_R_IS      GPIO_NUM_10
 #define PIN_MOTOR_L_EN      GPIO_NUM_19 // Up Enable
 #define PIN_MOTOR_R_EN      GPIO_NUM_21 // Down Enable
 
@@ -22,8 +25,8 @@
 #define I2C_ADDR_INA219     0x40
 
 // UI Buttons
-#define PIN_BTN_UP          GPIO_NUM_32
-#define PIN_BTN_DOWN        GPIO_NUM_33
+#define PIN_BTN_UP          GPIO_NUM_17
+#define PIN_BTN_DOWN        GPIO_NUM_16
 #define PIN_BTN_PRESET_1    GPIO_NUM_27 // Standing Height
 #define PIN_BTN_PRESET_2    GPIO_NUM_26 // Sitting Height
 

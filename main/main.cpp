@@ -2,29 +2,32 @@
 #include <string.h>
 #include <atomic>
 #include <chrono>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+
 #include "driver/gpio.h"
-#include "driver/ledc.h"
+#include "driver/i2c_master.h"
+
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+
 #include "logger.hpp"
 
-#include "i2c_master.hpp"
-
-
-#include "ina219.h"
-#include "vl53l.hpp" 
+#include "VL53L0X/VL53L0X.h"
 #include "motor_driver.hpp"
 #include "display_manager.hpp"
 #include "ui_manager.hpp"
 
 #include "desk_config.h"
 
-static const char *TAG = "MoTrotten";
 
-static ina219_t ina_dev;
+#define I2C_PORT_NUM                0
+#define I2C_MASTER_FREQ_HZ          100000 // 100kHz
+#define VL53L0X_ADDR                0x29
+
+static const char *TAG = "MoTrotten";
 
 static std::atomic<uint16_t> g_current_height(0);
 static std::atomic<float>    g_current_draw_ma(0.0f);
@@ -60,103 +63,43 @@ uint16_t load_height_preset(const char* key, uint16_t default_val) {
 void sensor_task(void *pvParameters) {
     static espp::Logger logger({.tag = "SensorTask", .level = espp::Logger::Verbosity::INFO});
 
-    espp::I2cMasterBus i2c_bus(espp::I2cMasterBus::Config{
-      .port = I2C_NUM_0,
-      .sda_io_num = PIN_I2C_SDA,
-      .scl_io_num = PIN_I2C_SCL,
-      .clk_speed = 400000, // 400kHz clock speed
-      .enable_internal_pullup = true,
-      .log_level = espp::Logger::Verbosity::INFO,
-    });
-    std::error_code ec;
-    i2c_bus.init(ec);
-    if (ec) {
-        logger.error("Failed to initialize I2C bus: {}", ec.message());
-        vTaskDelete(nullptr);
-        return;
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_PORT_NUM,
+        .sda_io_num = PIN_I2C_SDA,
+        .scl_io_num = PIN_I2C_SCL,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,             // Standard noise filtering
+        .flags = {
+          .enable_internal_pullup = true,   // Enable internal pull-ups
+        }
+    };
+
+    i2c_master_bus_handle_t bus_handle;
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &bus_handle));
+
+    i2c_device_config_t vl53l0x_dev_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = VL53L0X_ADDR,
+        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+    };
+
+    i2c_master_dev_handle_t dev_handle;
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &vl53l0x_dev_config, &dev_handle));
+    
+    VL53L0X vl53l(dev_handle);
+    if (!vl53l.init()) {
+      ESP_LOGE(TAG, "Failed to initialize VL53L0X sensor");
+      return;
     }
-    auto vl53l_device = i2c_bus.add_device<uint8_t>(espp::I2cMasterDevice<>::Config{
-        .device_address = espp::Vl53l::DEFAULT_ADDRESS,
-        .timeout_ms = 10,
-        .addr_bit_len = I2C_ADDR_BIT_LEN_7,
-        .scl_speed_hz = 400000,
-        .auto_init = true,
-        .log_level = espp::Logger::Verbosity::INFO,
-    }, ec);
-    if (ec) {
-        logger.error("Failed to add VL53L0X device to I2C bus: {}", ec.message());
-    }
-    else
-    {
-      espp::Vl53l::Config vl53l_config{
-          .device_address = espp::Vl53l::DEFAULT_ADDRESS,
-          .write = [vl53l_device](uint8_t addr, const uint8_t *data, size_t len) {
-              std::error_code ec_inner;
-              auto res = vl53l_device->write(data, len, ec_inner);
-              if (ec_inner)
-              {
-                logger.error("VL53L0X Write Error: {}", ec_inner.message());
-              }
-              return res;
-
-          },
-          .read = [vl53l_device](uint8_t addr, uint8_t *data, size_t len) {
-              std::error_code ec_inner;
-              auto res = vl53l_device->read(data, len, ec_inner);
-              if (ec_inner)
-              {
-                logger.error("VL53L0X Read Error: {}", ec_inner.message());
-              }
-              return res;
-          },
-          .log_level = espp::Logger::Verbosity::WARN,
-        };
-      espp::Vl53l vl53l(vl53l_config);
-    }
-
-
-    // // Initialize INA219
-    // memset(&ina_dev, 0, sizeof(ina219_t));
-    // ESP_ERROR_CHECK(ina219_init_desc(&ina_dev, I2C_ADDR_INA219, I2C_NUM_0, PIN_I2C_SDA, PIN_I2C_SCL));
-    // ESP_ERROR_CHECK(ina219_init(&ina_dev));
-    // ESP_ERROR_CHECK(ina219_configure(&ina_dev, INA219_BUS_RANGE_16V, INA219_GAIN_0_125,
-    //                                  INA219_RES_12BIT_1S, INA219_RES_12BIT_1S, INA219_MODE_CONT_SHUNT_BUS));
-    // // Calibrate INA219 for 0.1 Ohm shunt and 4A max current
-    // ESP_ERROR_CHECK(ina219_calibrate(&ina_dev, 0.1));
-    // logger.info("INA219 Initialized");
-
-
-
-    // std::error_code ec;
-    // if (!vl53l.set_timing_budget_ms(20, ec)) {
-    //     logger.error("Failed to set timing budget: {}", ec.message());
-    // }
-    // if (!vl53l.set_inter_measurement_period_ms(50, ec)) {
-    //     logger.error("Failed to set inter measurement period: {}", ec.message());
-    // }
-    // if (!vl53l.start_ranging(ec)) {
-    //     logger.error("Failed to start ranging: {}", ec.message());
-    // } else {
-    //     logger.info("VL53L0X Initialized and ranging started.");
-    // }
+    vl53l.startContinuous();
+    ESP_LOGI(TAG, "VL53L0X initialized successfully");
 
     while (1) {
-        // // Read INA219
-        // float current;
-        // if (ina219_get_current(&ina_dev, &current) == ESP_OK) {
-        //     g_current_draw_ma = current * 1000.0f; // Convert A to mA
-        // }
-
-        // // Read VL53L0X
-        // uint16_t range_mm = vl53l.get_distance_mm(ec);
-        // if (ec) {
-        //      logger.warn("Failed to get range: {}", ec.message());
-        // }
-        // else {
-        //     g_current_height = range_mm;
-        // }
-        
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Read VL53L0X
+        uint16_t range_mm = vl53l.readRangeContinuousMillimeters();
+        g_current_height = range_mm;
+        // ESP_LOGI(TAG, "Height: %d mm", range_mm);
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -205,8 +148,12 @@ void control_task(void *pvParameters) {
         bool btn_preset1_pressed = !gpio_get_level(PIN_BTN_PRESET_1);
         bool btn_preset2_pressed = !gpio_get_level(PIN_BTN_PRESET_2);
 
+        
         uint16_t current_height = g_current_height.load();
         float current_ma = g_current_draw_ma.load();
+        
+        logger.info("Buttons - Up: {}, Down: {}, Preset1: {}, Preset2: {}, height: {} mm, current: {:.2f} mA",
+                     btn_up_pressed, btn_down_pressed, btn_preset1_pressed, btn_preset2_pressed, current_height, current_ma);
 
         // Safety first: Collision detection
         if (g_is_moving && current_ma > COLLISION_MA) {
@@ -223,10 +170,12 @@ void control_task(void *pvParameters) {
             case DeskState::IDLE:
                 // Manual movement
                 if (btn_up_pressed && current_height < DESK_MAX_HEIGHT_MM) {
+                    logger.info("Up button pressed. Current Height: {} mm", current_height);
                     state = DeskState::MOVING_UP;
                     motor.move_up();
                     g_is_moving = true;
                 } else if (btn_down_pressed && current_height > DESK_MIN_HEIGHT_MM) {
+                    logger.info("Down button pressed. Current Height: {} mm", current_height);
                     state = DeskState::MOVING_DOWN;
                     motor.move_down();
                     g_is_moving = true;
@@ -270,6 +219,7 @@ void control_task(void *pvParameters) {
 
             case DeskState::MOVING_UP:
                 if (!btn_up_pressed || current_height >= DESK_MAX_HEIGHT_MM) {
+                    logger.info("Up button released or max height reached.");
                     state = DeskState::IDLE;
                     motor.stop();
                     g_is_moving = false;
@@ -278,6 +228,7 @@ void control_task(void *pvParameters) {
             
             case DeskState::MOVING_DOWN:
                 if (!btn_down_pressed || current_height <= DESK_MIN_HEIGHT_MM) {
+                    logger.info("Down button released or min height reached.");
                     state = DeskState::IDLE;
                     motor.stop();
                     g_is_moving = false;
@@ -361,5 +312,5 @@ extern "C" void app_main(void)
     
     // Create tasks and pin them to cores
     xTaskCreatePinnedToCore(sensor_task, "SensorTask", 4096, NULL, 5, NULL, 0);
-    // xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(control_task, "ControlTask", 8192, NULL, 5, NULL, 1);
 }
