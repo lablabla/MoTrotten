@@ -1,135 +1,134 @@
 #include "display_manager.hpp"
-#include "driver/spi_master.h"
-#include "esp_lcd_panel_ops.h"
-#include "esp_lcd_panel_io.h"
-#include "esp_lcd_panel_st7789.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "desk_config.h"
-#include "logger.hpp"
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_st7789.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "freertos/task.h"
 
-#define LV_TICK_PERIOD_MS 1
+static const char* TAG = "DisplayManager";
 
-static espp::Logger logger({.tag = "DisplayManager", .level = espp::Logger::Verbosity::INFO});
+// ─── init ────────────────────────────────────────────────────────────────────
 
-DisplayManager::DisplayManager() {
-    logger.info("Initializing DisplayManager...");
+bool DisplayManager::init() {
+    flush_sem_ = xSemaphoreCreateBinary();
+    if (!flush_sem_) return false;
 
-    // Initialize SPI bus
-    spi_bus_config_t buscfg = {
-        .mosi_io_num = PIN_DISP_SPI_MOSI,
-        .miso_io_num = PIN_DISP_SPI_MISO,
-        .sclk_io_num = PIN_DISP_SPI_SCLK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
-        .data4_io_num = -1,
-        .data5_io_num = -1,
-        .data6_io_num = -1,
-        .data7_io_num = -1,
-        .data_io_default_level = 0,
-        .max_transfer_sz = 320 * 240 * sizeof(uint16_t),
-        .flags = 0,
-        .isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO,
-        .intr_flags = 0,
+    // SPI bus
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num     = PIN_DISP_MOSI,
+        .miso_io_num     = -1,
+        .sclk_io_num     = PIN_DISP_CLK,
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
+        .max_transfer_sz = DISP_WIDTH * 40 * sizeof(uint16_t),
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(PIN_DISP_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+    if (spi_bus_initialize(DISP_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO) != ESP_OK) {
+        ESP_LOGE(TAG, "SPI bus init failed");
+        return false;
+    }
 
-    // Initialize display panel
-    esp_lcd_panel_io_handle_t io_handle = NULL;
-    esp_lcd_panel_io_spi_config_t io_config = {
-        .cs_gpio_num = PIN_DISP_SPI_CS,
-        .dc_gpio_num = PIN_DISP_DC,
-        .spi_mode = 0,
-        .pclk_hz = 40 * 1000 * 1000,
-        .trans_queue_depth = 10,
-        .on_color_trans_done = NULL,
-        .user_ctx = NULL,
-        .lcd_cmd_bits = 8,
-        .lcd_param_bits = 8,
-        .cs_ena_pretrans = 0,
-        .cs_ena_posttrans = 0,
-        .flags = {
-            .dc_high_on_cmd = 0,
-            .dc_low_on_data = 0,
-            .dc_low_on_param = 0,
-            .octal_mode = 0,
-            .quad_mode = 0,
-            .sio_mode = 0,
-            .lsb_first = 0,
-            .cs_high_active = 0,   
-        },
+    // Panel IO
+    esp_lcd_panel_io_spi_config_t io_cfg = {
+        .cs_gpio_num          = PIN_DISP_CS,
+        .dc_gpio_num          = PIN_DISP_DC,
+        .spi_mode             = 0,
+        .pclk_hz              = DISP_SPI_FREQ_HZ,
+        .trans_queue_depth    = 10,
+        .on_color_trans_done  = notify_flush_ready,
+        .user_ctx             = this,
+        .lcd_cmd_bits         = 8,
+        .lcd_param_bits       = 8,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)PIN_DISP_SPI_HOST, &io_config, &io_handle));
+    if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISP_SPI_HOST, &io_cfg, &io_) != ESP_OK) {
+        ESP_LOGE(TAG, "Panel IO init failed");
+        return false;
+    }
 
-    esp_lcd_panel_handle_t panel_handle = NULL;
-    esp_lcd_panel_dev_config_t panel_config = {
-        .reset_gpio_num = PIN_DISP_RST,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-        .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
-        .bits_per_pixel = 16,
-        .flags = {
-            .reset_active_high = 0,
-        },
-        .vendor_config = NULL
+    // ST7789 panel
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num  = PIN_DISP_RST,
+        .rgb_ele_order   = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel  = 16,
+        .flags           = { .reset_active_high = 0 },
+        .vendor_config   = nullptr,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, true, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
+    if (esp_lcd_new_panel_st7789(io_, &panel_cfg, &panel_) != ESP_OK) {
+        ESP_LOGE(TAG, "Panel init failed");
+        return false;
+    }
 
-    // NOTE: Backlight is not controlled, assumed to be always on.
+    esp_lcd_panel_reset(panel_);
+    esp_lcd_panel_init(panel_);
+    esp_lcd_panel_invert_color(panel_, true);   // Required for IPS panels
+    esp_lcd_panel_set_gap(panel_, 0, 0);        // May need offset adjustment on hardware
+    esp_lcd_panel_swap_xy(panel_, false);
+    esp_lcd_panel_mirror(panel_, true, false);  // Verify orientation on hardware
+    esp_lcd_panel_disp_on_off(panel_, true);
 
-    // Initialize LVGL
+    // LVGL
     lv_init();
-    
-    // Allocate LVGL draw buffers
-    buf1_ = (lv_color_t *)heap_caps_malloc(320 * 240 * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    buf2_ = (lv_color_t *)heap_caps_malloc(320 * 240 * sizeof(lv_color_t), MALLOC_CAP_DMA);
-    lv_disp_draw_buf_init(&disp_buf_, buf1_, buf2_, 320 * 240);
 
-    // Initialize LVGL display driver
+    buf1_ = (lv_color_t*)heap_caps_malloc(DISP_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    buf2_ = (lv_color_t*)heap_caps_malloc(DISP_WIDTH * 40 * sizeof(lv_color_t), MALLOC_CAP_DMA);
+    if (!buf1_ || !buf2_) {
+        ESP_LOGE(TAG, "LVGL buffer allocation failed");
+        return false;
+    }
+
+    lv_disp_draw_buf_init(&draw_buf_, buf1_, buf2_, DISP_WIDTH * 40);
     lv_disp_drv_init(&disp_drv_);
-    disp_drv_.hor_res = 320;
-    disp_drv_.ver_res = 240;
-    disp_drv_.flush_cb = lvgl_flush_cb;
-    disp_drv_.draw_buf = &disp_buf_;
-    disp_drv_.user_data = panel_handle;
+    disp_drv_.hor_res   = DISP_WIDTH;
+    disp_drv_.ver_res   = DISP_HEIGHT;
+    disp_drv_.flush_cb  = flush_cb;
+    disp_drv_.draw_buf  = &draw_buf_;
+    disp_drv_.user_data = this;
     lv_disp_drv_register(&disp_drv_);
 
-    // Tick interface for LVGL
-    const esp_timer_create_args_t lvgl_tick_timer_args = {
-        .callback = &lvgl_tick_cb,
-        .arg = NULL,
+    // 1ms tick timer
+    esp_timer_create_args_t tick_args = {
+        .callback        = lvgl_tick_cb,
+        .arg             = nullptr,
         .dispatch_method = ESP_TIMER_TASK,
-        .name = "lvgl_tick",
-        .skip_unhandled_events = false,
+        .name            = "lvgl_tick",
     };
-    esp_timer_handle_t lvgl_tick_timer = NULL;
-    ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer, LV_TICK_PERIOD_MS * 1000));
-    
-    logger.info("DisplayManager Initialized.");
+    esp_timer_create(&tick_args, &tick_timer_);
+    esp_timer_start_periodic(tick_timer_, 1000); // 1ms
+
+    ESP_LOGI(TAG, "Initialized (%dx%d)", DISP_WIDTH, DISP_HEIGHT);
+    return true;
 }
 
-void DisplayManager::lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p) {
-    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)drv->user_data;
-    int offsetx1 = area->x1;
-    int offsetx2 = area->x2;
-    int offsety1 = area->y1;
-    int offsety2 = area->y2;
-    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_p);
+// ─── tick ────────────────────────────────────────────────────────────────────
+
+void DisplayManager::tick() {
+    lv_task_handler();
+    vTaskDelay(pdMS_TO_TICKS(5));
+}
+
+// ─── static callbacks ────────────────────────────────────────────────────────
+
+void DisplayManager::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map) {
+    auto* dm = static_cast<DisplayManager*>(drv->user_data);
+    esp_lcd_panel_draw_bitmap(dm->panel_,
+                              area->x1, area->y1,
+                              area->x2 + 1, area->y2 + 1,
+                              color_map);
+    // Wait for DMA transfer to complete before releasing the buffer
+    xSemaphoreTake(dm->flush_sem_, portMAX_DELAY);
     lv_disp_flush_ready(drv);
 }
 
-void DisplayManager::lvgl_tick_cb(void *arg) {
-    lv_tick_inc(LV_TICK_PERIOD_MS);
+bool DisplayManager::notify_flush_ready(esp_lcd_panel_io_handle_t,
+                                        esp_lcd_panel_io_event_data_t*, void* ctx) {
+    auto* dm = static_cast<DisplayManager*>(ctx);
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(dm->flush_sem_, &woken);
+    portYIELD_FROM_ISR(woken);
+    return false;
 }
 
-void DisplayManager::start_render_loop() {
-    while (1) {
-        lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
+void DisplayManager::lvgl_tick_cb(void*) {
+    lv_tick_inc(1);
 }
