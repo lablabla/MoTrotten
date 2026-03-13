@@ -1,62 +1,65 @@
 #pragma once
 
-#include "driver/mcpwm_prelude.h"
-#include "driver/gpio.h"
-#include "esp_adc/adc_oneshot.h"
+#include <functional>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/portmacro.h"
+#include "esp_adc/adc_oneshot.h"
 #include "desk_config.h"
-#include "logger.hpp"
-#include <functional>
 
-// Hardware Assumption:
-// PIN_MOTOR_R_PWM, PIN_MOTOR_L_PWM, PIN_MOTOR_R_EN, PIN_MOTOR_L_EN defined in desk_config.h
-// NEW: PIN_MOTOR_R_IS (ADC Channel), PIN_MOTOR_L_IS (ADC Channel)
-// Example: #define PIN_MOTOR_R_IS ADC_CHANNEL_6
+enum class MotorDirection { UP, DOWN, STOPPED };
 
 class MotorDriver {
 public:
-    using StallCallback = std::function<void(bool is_stalled)>;
+    using StallCallback = std::function<void()>;
 
-    MotorDriver();
-    ~MotorDriver();
+    // Init LEDC, GPIO enables, ADC unit, spawn motor_mon_task.
+    bool init();
 
+    // Non-blocking. Sets direction and starts ramp in motor_mon_task.
+    // Clears stall state. Idempotent if already moving in same direction.
     void move_up();
     void move_down();
+
+    // Non-blocking soft stop. motor_mon_task ramps duty to 0.
     void stop();
 
-    // Register a function to be called when stall status changes
-    // callback(true)  = Stalled
-    // callback(false) = Stall Cleared / Ready
-    void register_stall_callback(StallCallback cb);
+    // Immediate stop — no ramp. Safe from any task context.
+    void emergency_stop();
+
+    void set_stall_callback(StallCallback cb);
+
+    MotorDirection direction() const { return direction_; }
+    bool is_stalled()          const { return stalled_; }
+    bool is_running()          const;
+
+    // Shared ADC unit handle — pass to ButtonReader at init.
+    adc_oneshot_unit_handle_t adc_handle() const { return adc_; }
 
 private:
-    void set_speed(float speed);
-    void enable_driver(bool enable);
-    
-    // Background task to monitor current
-    static void monitor_task_entry(void* arg);
-    void monitor_task_loop();
+    enum class MotorState {
+        STOPPED,
+        RAMPING_UP,
+        RUNNING_UP,
+        STOPPING_FROM_UP,
+        RAMPING_DOWN,
+        RUNNING_DOWN,
+        STOPPING_FROM_DOWN,
+    };
 
-    espp::Logger logger_;
-    float current_speed_ = 0.0f;
-    uint32_t period_ticks_ = 0;
-    
-    // State
-    bool is_stalled_ = false;
-    TickType_t movement_start_tick_ = 0;
+    void set_duty_raw(uint32_t duty, MotorDirection dir);
+    void monitor_loop();
+    static void monitor_task(void* arg);
 
-    // MCPWM Handles
-    mcpwm_timer_handle_t timer_ = NULL;
-    mcpwm_oper_handle_t oper_ = NULL;
-    mcpwm_cmpr_handle_t comparator_ = NULL;
-    mcpwm_gen_handle_t gen_r_ = NULL;
-    mcpwm_gen_handle_t gen_l_ = NULL;
+    volatile MotorState     motor_state_  = MotorState::STOPPED;
+    volatile MotorDirection direction_    = MotorDirection::STOPPED;
+    volatile uint32_t       current_duty_ = 0;
+    volatile bool           stalled_      = false;
+    TickType_t              ramp_start_tick_ = 0;
+    TickType_t              move_start_tick_ = 0;
 
-    // ADC Handles
-    adc_oneshot_unit_handle_t adc_handle_ = NULL;
-    
-    // Callback
-    StallCallback stall_callback_ = nullptr;
-    TaskHandle_t monitor_task_handle_ = nullptr;
+    adc_oneshot_unit_handle_t adc_             = nullptr;
+    StallCallback             stall_cb_        = nullptr;
+    TaskHandle_t              monitor_task_handle_ = nullptr;
+    portMUX_TYPE              mux_             = portMUX_INITIALIZER_UNLOCKED;
 };
