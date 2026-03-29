@@ -3052,6 +3052,12 @@
 		(uuid "76210c79-05d8-4e61-a1d5-7e9163e75ed1")
 	)
 	(junction
+		(at 218.44 104.14)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "e72b1915-0a05-40b6-bed2-9d99e9ac7985")
+	)
+	(junction
 		(at 27.94 31.75)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -3229,6 +3235,16 @@
 	)
 	(wire
 		(pts
+			(xy 204.47 104.14) (xy 218.44 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "0f5c12ed-4668-467e-a769-bf2e2afec966")
+	)
+	(wire
+		(pts
 			(xy 127 99.06) (xy 129.54 99.06)
 		)
 		(stroke
@@ -3296,6 +3312,16 @@
 			(type default)
 		)
 		(uuid "1b712fbc-2cfd-4287-81aa-d11e44468dff")
+	)
+	(wire
+		(pts
+			(xy 204.47 95.25) (xy 204.47 104.14)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "1d09317c-4e49-47ec-8d89-829aa2f06e61")
 	)
 	(wire
 		(pts
@@ -3669,6 +3695,16 @@
 	)
 	(wire
 		(pts
+			(xy 204.47 78.74) (xy 204.47 87.63)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "7d7ad0cf-1ab9-4f35-99cb-8da89580cd1e")
+	)
+	(wire
+		(pts
 			(xy 97.79 83.82) (xy 101.6 83.82)
 		)
 		(stroke
@@ -3936,6 +3972,16 @@
 			(type default)
 		)
 		(uuid "b75f1a95-9c00-4bef-82ba-4a51ad2253b8")
+	)
+	(wire
+		(pts
+			(xy 218.44 78.74) (xy 204.47 78.74)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ba169a01-3858-4cf0-85af-9e754dca4362")
 	)
 	(wire
 		(pts
@@ -7902,6 +7948,76 @@
 			(project ""
 				(path "/ebe5e123-9967-4e9a-99c8-0da7150f1a56"
 					(reference "#PWR07")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Device:C")
+		(at 204.47 91.44 0)
+		(mirror y)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(uuid "ac8da913-c152-445e-82bc-98fe627b8723")
+		(property "Reference" "C7"
+			(at 210.566 89.408 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "0.1uF"
+			(at 212.344 91.694 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "Capacitor_THT:C_Rect_L7.2mm_W3.5mm_P5.00mm_FKS2_FKP2_MKS2_MKP2"
+			(at 203.5048 95.25 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "~"
+			(at 204.47 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Unpolarized capacitor"
+			(at 204.47 91.44 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "2f27d5fb-6fd3-45be-a0b0-1ea7ec2cdb90")
+		)
+		(pin "1"
+			(uuid "46ea9f19-c642-482c-8689-da2e0d616906")
+		)
+		(instances
+			(project "Main_Board"
+				(path "/ebe5e123-9967-4e9a-99c8-0da7150f1a56"
+					(reference "C7")
 					(unit 1)
 				)
 			)
