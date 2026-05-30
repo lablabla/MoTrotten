@@ -181,8 +181,8 @@ static void test_motor(bool up) {
 
     ledc_channel_t active_ch = up ? MOTOR_LEDC_CH_R : MOTOR_LEDC_CH_L;
     ledc_channel_t idle_ch   = up ? MOTOR_LEDC_CH_L : MOTOR_LEDC_CH_R;
-    int en_active = up ? PIN_MOTOR_EN_R : PIN_MOTOR_EN_L;
-    int en_idle   = up ? PIN_MOTOR_EN_L : PIN_MOTOR_EN_R;
+    gpio_num_t en_active = up ? PIN_MOTOR_EN_R : PIN_MOTOR_EN_L;
+    gpio_num_t en_idle   = up ? PIN_MOTOR_EN_L : PIN_MOTOR_EN_R;
 
     gpio_set_level(en_idle, 0);
     ledc_set_duty(MOTOR_LEDC_MODE, idle_ch, 0);
