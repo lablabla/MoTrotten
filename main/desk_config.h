@@ -32,15 +32,19 @@
 #define MOTOR_RAMP_MS       500
 
 // ─── CURRENT SENSE ──────────────────────────────────────
-// Hardware: 4.7kΩ drain resistor on BTS7960 IS pins.
-// At 4.4A stall: V_IS = (4.4 / 8500) * 4700 ≈ 2.43V
-// ADC (12-bit, 3.3V ref): 2.43 / 3.3 * 4095 ≈ 3017 raw
+// Hardware: 2.2kΩ drain resistor on BTS7960 IS pins.
+// IS ratio kILIS = 8500 → V_IS = I_load * R_IS / kILIS
+// At 4.4A stall: V_IS = (4.4 / 8500) * 2200 ≈ 1.14V
+// ADC (12-bit, 3.3V ref): 1.14 / 3.3 * 4095 ≈ 1413 raw
+// Threshold set at ~92% of stall (same ratio as 4.7kΩ design).
+// Tune empirically: log raw values during normal movement and set
+// threshold comfortably above that baseline.
 #define PIN_MOTOR_IS_R      GPIO_NUM_1    // ADC1_CH0
 #define PIN_MOTOR_IS_L      GPIO_NUM_2    // ADC1_CH1
 #define MOTOR_IS_ADC_UNIT   ADC_UNIT_1
 #define MOTOR_IS_CH_R       ADC_CHANNEL_0
 #define MOTOR_IS_CH_L       ADC_CHANNEL_1
-#define MOTOR_STALL_THRESHOLD_RAW  2800
+#define MOTOR_STALL_THRESHOLD_RAW  1300
 #define MOTOR_STALL_CONFIRM_COUNT  5      // 5 × 50ms = 250ms
 #define MOTOR_MON_TASK_MS          50
 #define MOTOR_INRUSH_IGNORE_MS     500
