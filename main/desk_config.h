@@ -13,7 +13,7 @@
 #define PIN_DISP_RST        GPIO_NUM_14
 #define DISP_SPI_HOST       SPI2_HOST
 #define DISP_SPI_FREQ_HZ    (40 * 1000 * 1000)
-#define DISP_WIDTH          240
+#define DISP_WIDTH          320
 #define DISP_HEIGHT         240
 
 // ─── MOTOR ──────────────────────────────────────────────

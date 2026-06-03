@@ -15,8 +15,12 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "driver/spi_master.h"
 #include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_st7789.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 #include "desk_config.h"
@@ -411,6 +415,208 @@ static void test_limit_switch() {
     printf("  PASS if pin reads 1 at rest and 0 when switch is activated.\n");
 }
 
+// ─── TEST 9: Display (ST7789) ────────────────────────────────────────────────
+
+static esp_lcd_panel_handle_t    s_panel  = nullptr;
+static esp_lcd_panel_io_handle_t s_lcd_io = nullptr;
+// Global row buffer in internal RAM — safe for DMA transfers.
+static uint16_t s_disp_row[DISP_WIDTH];
+
+// bgr: use BGR element order instead of RGB
+static bool display_ready(bool bgr) {
+    if (s_panel) return true;
+
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num     = PIN_DISP_MOSI,
+        .miso_io_num     = -1,
+        .sclk_io_num     = PIN_DISP_CLK,
+        .quadwp_io_num   = -1,
+        .quadhd_io_num   = -1,
+        .max_transfer_sz = DISP_WIDTH * sizeof(uint16_t),
+    };
+    esp_err_t r;
+    r = spi_bus_initialize(DISP_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    printf("  spi_bus_initialize:       %s\n", esp_err_to_name(r));
+    if (r != ESP_OK) return false;
+
+    esp_lcd_panel_io_spi_config_t io_cfg = {
+        .cs_gpio_num          = PIN_DISP_CS,
+        .dc_gpio_num          = PIN_DISP_DC,
+        .spi_mode             = 0,
+        .pclk_hz              = DISP_SPI_FREQ_HZ,
+        .trans_queue_depth    = 4,
+        .on_color_trans_done  = nullptr,
+        .lcd_cmd_bits         = 8,
+        .lcd_param_bits       = 8,
+    };
+    r = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISP_SPI_HOST,
+                                  &io_cfg, &s_lcd_io);
+    printf("  esp_lcd_new_panel_io_spi: %s\n", esp_err_to_name(r));
+    if (r != ESP_OK) return false;
+
+    esp_lcd_panel_dev_config_t panel_cfg = {
+        .reset_gpio_num = PIN_DISP_RST,
+        .rgb_ele_order  = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = 16,
+        .flags          = { .reset_active_high = 0 },
+        .vendor_config  = nullptr,
+    };
+    r = esp_lcd_new_panel_st7789(s_lcd_io, &panel_cfg, &s_panel);
+    printf("  esp_lcd_new_panel_st7789: %s  bgr=%d\n", esp_err_to_name(r), bgr);
+    if (r != ESP_OK) return false;
+
+    esp_lcd_panel_reset(s_panel);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_lcd_panel_init(s_panel);
+    esp_lcd_panel_io_tx_param(s_lcd_io, 0xB0, (uint8_t[]){0x00, 0xE8}, 2);
+    esp_lcd_panel_swap_xy(s_panel, true);
+
+    // 2. Fix Mirrored/Upside-down rendering if it occurs
+    // Flip these true/false arguments if your text or images appear backwards
+    esp_lcd_panel_mirror(s_panel, true, false);
+
+    // 3. Fix the color space inversion (Teal -> Red, Yellow -> Blue, etc.)
+    // esp_lcd_panel_invert_color(s_panel, true);
+
+    // 4. Handle Hardware Display Gaps
+    // If your image is shifted or has a line of static on the edge,
+    // change these offsets (commonly 0, 0 or 0, 32 for certain ST7789 panels)
+    esp_lcd_panel_set_gap(s_panel, 0, 0);
+
+    // ─── END OF CONFIGURATION ───
+
+    esp_lcd_panel_disp_on_off(s_panel, true);
+    printf("  Panel ready.\n");
+    return true;
+}
+
+// Destroy and recreate panel so diag test can change settings from scratch.
+static void display_reset_panel() {
+    if (s_panel) {
+        // esp_lcd_del_panel omitted — null the handle so display_ready() re-inits
+        s_panel = nullptr;
+    }
+    if (s_lcd_io) { esp_lcd_panel_io_del(s_lcd_io); s_lcd_io = nullptr; }
+    spi_bus_free(DISP_SPI_HOST);
+}
+
+// byte_swap: swap each pixel's two bytes — fixes "Red→Yellow" colour corruption
+//            caused by ESP32 DMA sending uint16_t LSB-first to an MSB-first display.
+static void disp_fill(uint16_t color565, bool byte_swap = false) {
+    uint16_t c = byte_swap ? __builtin_bswap16(color565) : color565;
+    for (int x = 0; x < DISP_WIDTH; x++) s_disp_row[x] = c;
+    for (int y = 0; y < DISP_HEIGHT; y++) {
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + 1, s_disp_row);
+    }
+}
+
+// Drive a GPIO HIGH as a candidate backlight pin.
+static void try_backlight(int gpio_num) {
+    gpio_config_t cfg = {
+        .pin_bit_mask = (1ULL << gpio_num),
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&cfg);
+    gpio_set_level((gpio_num_t)gpio_num, 1);
+}
+
+// Reinit panel with specific settings, fill R/G/B for 1s each.
+// byte_swap: swap the two bytes of each pixel in software (__builtin_bswap16)
+static void diag_try(bool byte_swap, bool bgr, bool swap_xy,
+                     bool invert, bool mirror_x, bool mirror_y,
+                     const char* label) {
+    printf("\n  [%s]\n", label);
+    display_reset_panel();
+    if (!display_ready(bgr)) return;
+    esp_lcd_panel_set_gap(s_panel, 0, 0);
+    esp_lcd_panel_invert_color(s_panel, invert);
+    esp_lcd_panel_swap_xy(s_panel, swap_xy);
+    esp_lcd_panel_mirror(s_panel, mirror_x, mirror_y);
+
+    struct { uint16_t c; const char* n; } fills[] = {
+        { 0xF800, "RED"   },
+        { 0x07E0, "GREEN" },
+        { 0x001F, "BLUE"  },
+    };
+    for (auto& f : fills) {
+        printf("    %s\n", f.n);
+        disp_fill(f.c, byte_swap);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+static void test_display_diag() {
+    printf("\n=== TEST d: Display Diagnostic ===\n");
+    printf("  Two known issues with ST7789 on ESP32:\n");
+    printf("  1. Wrong colours (Red→Yellow etc): fix = swap_bytes=true\n");
+    printf("  2. Screen not full: fix = swap_xy=true\n\n");
+    printf("  Cycling 6 combinations. Note which shows correct R/G/B fills\n");
+    printf("  AND fills the whole %dx%d screen.\n\n", DISP_WIDTH, DISP_HEIGHT);
+
+    // swap_bytes | bgr   | swap_xy | invert | mirror_x | mirror_y
+    diag_try(false, false, false, true,  true,  false, "A: baseline (swap_bytes=off, swap_xy=off)");
+    diag_try(true,  false, false, true,  true,  false, "B: swap_bytes=on,  swap_xy=off");
+    diag_try(false, false, true,  true,  true,  false, "C: swap_bytes=off, swap_xy=on");
+    diag_try(true,  false, true,  true,  true,  false, "D: swap_bytes=on,  swap_xy=on  [most likely correct]");
+    diag_try(true,  true,  true,  true,  true,  false, "E: swap_bytes=on,  swap_xy=on,  bgr=on");
+    diag_try(true,  false, true,  false, true,  false, "F: swap_bytes=on,  swap_xy=on,  invert=off");
+
+    display_reset_panel();
+    printf("\n  Report which label (A-F) showed correct RED/GREEN/BLUE fills\n");
+    printf("  filling the whole screen. Apply those settings in display_manager.cpp.\n");
+}
+
+static void test_display() {
+    printf("\n=== TEST 9: Display (ST7789 %dx%d) ===\n", DISP_WIDTH, DISP_HEIGHT);
+    printf("  MOSI=GPIO%d CLK=GPIO%d CS=GPIO%d DC=GPIO%d RST=GPIO%d\n",
+           PIN_DISP_MOSI, PIN_DISP_CLK, PIN_DISP_CS, PIN_DISP_DC, PIN_DISP_RST);
+    if (!display_ready(true)) return;
+
+    // --- Solid colour fills ---
+    struct { uint16_t c; const char* name; } fills[] = {
+        { 0xF800, "RED"     },
+        { 0x07E0, "GREEN"   },
+        { 0x001F, "BLUE"    },
+        { 0xFFFF, "WHITE"   },
+        { 0x0000, "BLACK"   },
+    };
+    for (auto& f : fills) {
+        printf("  %s\n", f.name);
+        disp_fill(f.c);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
+    // --- Colour bars (8 horizontal bands) ---
+    printf("  Colour bars (R / Y / G / C / B / M / W / K)...\n");
+    const uint16_t bars[] = { 0xF800, 0xFFE0, 0x07E0, 0x07FF,
+                               0x001F, 0xF81F, 0xFFFF, 0x0000 };
+    const int band = DISP_HEIGHT / 8;
+    for (int y = 0; y < DISP_HEIGHT; y++) {
+        uint16_t c = bars[y / band < 8 ? y / band : 7];
+        for (int x = 0; x < DISP_WIDTH; x++) s_disp_row[x] = c;
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + 1, s_disp_row);
+    }
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    // --- Checkerboard (8×8 px squares) ---
+    printf("  Checkerboard (8px squares)...\n");
+    for (int y = 0; y < DISP_HEIGHT; y++) {
+        for (int x = 0; x < DISP_WIDTH; x++) {
+            s_disp_row[x] = (((x >> 3) ^ (y >> 3)) & 1) ? 0xFFFF : 0x0000;
+        }
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + 1, s_disp_row);
+    }
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    disp_fill(0x0000); // leave screen black
+    printf("  PASS if all patterns displayed correctly.\n");
+    printf("  Wrong colours?  Toggle rgb_ele_order BGR<->RGB in display_ready().\n");
+    printf("  Flipped/rotated? Adjust swap_xy / mirror settings in display_ready().\n");
+}
+
 // ─── menu ────────────────────────────────────────────────────────────────────
 
 static void print_menu() {
@@ -423,6 +629,8 @@ static void print_menu() {
     printf(" 6  Button ADC ladder\n");
     printf(" 7  VL53L0X I2C scan + model ID\n");
     printf(" 8  Limit switch GPIO\n");
+    printf(" 9  Display: solid fills + colour bars + checkerboard\n");
+    printf(" d  Display diagnostic: gap/invert sweep (run this first)\n");
     printf(" m  Show this menu\n");
     printf("=====================================\n> ");
     fflush(stdout);
@@ -450,6 +658,8 @@ extern "C" void app_main() {
             case '6': test_buttons();       break;
             case '7': test_vl53l0x();       break;
             case '8': test_limit_switch();  break;
+            case '9': test_display();       break;
+            case 'd': case 'D': test_display_diag(); break;
             case 'm': case 'M': break;
             default:
                 printf("  Unknown key '%c'\n", c);
