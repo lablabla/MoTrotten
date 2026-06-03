@@ -23,6 +23,7 @@
 #include "esp_lcd_panel_st7789.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "VL53L0X.h"
 #include "desk_config.h"
 
 // ─── ADC singleton (shared across tests) ────────────────────────────────────
@@ -345,7 +346,7 @@ static void test_vl53l0x() {
         .scl_io_num        = PIN_I2C_SCL,
         .clk_source        = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags             = { .enable_internal_pullup = true },
+        .flags             = { .enable_internal_pullup = false },
     };
     i2c_master_bus_handle_t bus;
     if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
@@ -390,6 +391,72 @@ static void test_vl53l0x() {
 
     i2c_del_master_bus(bus);
     printf("  PASS if device found at 0x29 and model ID = 0xEE.\n");
+}
+
+// ─── TEST t: VL53L0X range readings ──────────────────────────────────────────
+
+static void test_tof_range() {
+    printf("\n=== TEST t: VL53L0X Range Readings ===\n");
+    printf("  SDA=GPIO%d  SCL=GPIO%d  addr=0x%02X\n",
+           PIN_I2C_SDA, PIN_I2C_SCL, VL53L0X_ADDR);
+
+    i2c_master_bus_config_t bus_cfg = {
+        .i2c_port          = I2C_PORT,
+        .sda_io_num        = PIN_I2C_SDA,
+        .scl_io_num        = PIN_I2C_SCL,
+        .clk_source        = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags             = { .enable_internal_pullup = false },
+    };
+    i2c_master_bus_handle_t bus;
+    if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
+        printf("  ERROR: I2C bus init failed.\n");
+        return;
+    }
+
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = VL53L0X_ADDR,
+        .scl_speed_hz    = I2C_FREQ_HZ,
+    };
+    i2c_master_dev_handle_t dev;
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &dev) != ESP_OK) {
+        printf("  ERROR: Failed to add I2C device.\n");
+        i2c_del_master_bus(bus);
+        return;
+    }
+
+    VL53L0X sensor(dev);
+    sensor.setTimeout(500);
+
+    if (!sensor.init()) {
+        printf("  ERROR: VL53L0X init failed. Check power and pull-ups.\n");
+        i2c_master_bus_rm_device(dev);
+        i2c_del_master_bus(bus);
+        return;
+    }
+    printf("  Sensor init OK. 30 readings, 200ms apart.\n");
+    printf("  Move your hand over the sensor to verify range changes.\n\n");
+
+    int ok = 0, errors = 0;
+    for (int i = 0; i < 30; i++) {
+        uint16_t mm = sensor.readRangeSingleMillimeters();
+        if (sensor.timeoutOccurred() || mm == 65535) {
+            printf("  [%2d] TIMEOUT / out of range\n", i);
+            errors++;
+        } else {
+            printf("  [%2d] %4d mm  (%.1f cm)\n", i, mm, mm / 10.0f);
+            ok++;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    printf("\n  %d/%d readings valid.\n", ok, ok + errors);
+    printf("  PASS if readings change as you move an object over the sensor.\n");
+    printf("  Typical desk range: 600–1200mm. Values >8190mm = no target.\n");
+
+    i2c_master_bus_rm_device(dev);
+    i2c_del_master_bus(bus);
 }
 
 // ─── TEST 8: Limit switch ────────────────────────────────────────────────────
@@ -628,6 +695,7 @@ static void print_menu() {
     printf(" 5  Current sense ADC readings\n");
     printf(" 6  Button ADC ladder\n");
     printf(" 7  VL53L0X I2C scan + model ID\n");
+    printf(" t  VL53L0X range readings (library, 30 samples)\n");
     printf(" 8  Limit switch GPIO\n");
     printf(" 9  Display: solid fills + colour bars + checkerboard\n");
     printf(" d  Display diagnostic: gap/invert sweep (run this first)\n");
@@ -657,6 +725,7 @@ extern "C" void app_main() {
             case '5': test_current_sense(); break;
             case '6': test_buttons();       break;
             case '7': test_vl53l0x();       break;
+            case 't': case 'T': test_tof_range(); break;
             case '8': test_limit_switch();  break;
             case '9': test_display();       break;
             case 'd': case 'D': test_display_diag(); break;
