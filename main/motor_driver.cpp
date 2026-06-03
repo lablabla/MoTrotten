@@ -89,8 +89,11 @@ void MotorDriver::move_up() {
         portEXIT_CRITICAL(&mux_);
         return;
     }
+    // Both EN pins must be HIGH so the idle half-bridge provides a GND return
+    // path. Direction is controlled by which PWM channel carries duty > 0;
+    // the idle channel stays at duty=0 (low-side switch closed → GND).
     gpio_set_level(PIN_MOTOR_EN_R, 1);
-    gpio_set_level(PIN_MOTOR_EN_L, 0);
+    gpio_set_level(PIN_MOTOR_EN_L, 1);
     ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R, 0);
     ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R);
     ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L, 0);
@@ -110,7 +113,7 @@ void MotorDriver::move_down() {
         portEXIT_CRITICAL(&mux_);
         return;
     }
-    gpio_set_level(PIN_MOTOR_EN_R, 0);
+    gpio_set_level(PIN_MOTOR_EN_R, 1);
     gpio_set_level(PIN_MOTOR_EN_L, 1);
     ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R, 0);
     ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R);

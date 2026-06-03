@@ -17,6 +17,7 @@
 #include "driver/ledc.h"
 #include "driver/i2c_master.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_timer.h"
 #include "esp_log.h"
 #include "desk_config.h"
 
@@ -179,15 +180,15 @@ static void test_motor(bool up) {
     wait_enter();
     if (!ledc_ready()) return;
 
+    gpio_set_level(PIN_MOTOR_EN_R, 1);
+    gpio_set_level(PIN_MOTOR_EN_L, 1);
+
     ledc_channel_t active_ch = up ? MOTOR_LEDC_CH_R : MOTOR_LEDC_CH_L;
     ledc_channel_t idle_ch   = up ? MOTOR_LEDC_CH_L : MOTOR_LEDC_CH_R;
-    gpio_num_t en_active = up ? PIN_MOTOR_EN_R : PIN_MOTOR_EN_L;
-    gpio_num_t en_idle   = up ? PIN_MOTOR_EN_L : PIN_MOTOR_EN_R;
-
-    gpio_set_level(en_idle, 0);
+    
+    // Ensure the idle side is firmly anchored to 0V (GND)
     ledc_set_duty(MOTOR_LEDC_MODE, idle_ch, 0);
     ledc_update_duty(MOTOR_LEDC_MODE, idle_ch);
-    gpio_set_level(en_active, 1);
 
     // Ramp up over MOTOR_RAMP_MS
     const int steps = 20;
@@ -214,31 +215,89 @@ static void test_motor(bool up) {
 
 // ─── TEST 5: Current sense ADC ────────────────────────────────────────────────
 
+static void is_print_reading(int n) {
+    int r = 0, l = 0;
+    adc_oneshot_read(s_adc, MOTOR_IS_CH_R, &r);
+    adc_oneshot_read(s_adc, MOTOR_IS_CH_L, &l);
+    float vr = r * 3.3f / 4095.0f;
+    float vl = l * 3.3f / 4095.0f;
+    float ir = vr / 2200.0f * 8500.0f;
+    float il = vl / 2200.0f * 8500.0f;
+    printf("  [%2d] IS_R: raw=%4d %.3fV %.2fA | IS_L: raw=%4d %.3fV %.2fA\n",
+           n, r, vr, ir, l, vl, il);
+}
+
+// Run motor in one direction while sampling IS every 200ms.
+// Sequence: ramp up → full speed 2s → ramp down.
+static void motor_run_with_is(bool up) {
+    ledc_channel_t active_ch = up ? MOTOR_LEDC_CH_R : MOTOR_LEDC_CH_L;
+    ledc_channel_t idle_ch   = up ? MOTOR_LEDC_CH_L : MOTOR_LEDC_CH_R;
+    const int steps  = 20;
+    int reading = 0;
+
+    gpio_set_level(PIN_MOTOR_EN_R, 1);
+    gpio_set_level(PIN_MOTOR_EN_L, 1);
+    ledc_set_duty(MOTOR_LEDC_MODE, idle_ch, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, idle_ch);
+
+    printf("  >> Ramp UP (%s)\n", up ? "UP" : "DOWN");
+    for (int i = 0; i <= steps; i++) {
+        uint32_t duty = (uint32_t)i * MOTOR_MAX_DUTY / steps;
+        ledc_set_duty(MOTOR_LEDC_MODE, active_ch, duty);
+        ledc_update_duty(MOTOR_LEDC_MODE, active_ch);
+        is_print_reading(reading++);
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_RAMP_MS / steps));
+    }
+
+    printf("  >> Full speed 2s\n");
+    int64_t end = esp_timer_get_time() + 2000000LL;
+    while (esp_timer_get_time() < end) {
+        is_print_reading(reading++);
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    printf("  >> Ramp DOWN\n");
+    for (int i = steps; i >= 0; i--) {
+        uint32_t duty = (uint32_t)i * MOTOR_MAX_DUTY / steps;
+        ledc_set_duty(MOTOR_LEDC_MODE, active_ch, duty);
+        ledc_update_duty(MOTOR_LEDC_MODE, active_ch);
+        is_print_reading(reading++);
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_RAMP_MS / steps));
+    }
+    motor_off();
+}
+
 static void test_current_sense() {
     printf("\n=== TEST 5: Current Sense ADC ===\n");
-    printf("  R_IS = 2200Ω, kILIS = 8500, Vref = 3.3V, 12-bit ADC.\n");
-    printf("  Formula: I = (raw * 3.3 / 4095) / 2200 * 8500\n");
+    printf("  R_IS=2200Ω  kILIS=8500  Vref=3.3V  12-bit\n");
+    printf("  I = (raw * 3.3 / 4095) / 2200 * 8500\n");
     printf("  Stall threshold: %d raw (~%.1fA)\n",
            MOTOR_STALL_THRESHOLD_RAW,
            (float)MOTOR_STALL_THRESHOLD_RAW * 3.3f / 4095.0f / 2200.0f * 8500.0f);
-    printf("  --- 15 readings at rest (motor off): ---\n");
-    if (!adc_ready()) return;
+    printf("  CAUTION: desk will move UP then DOWN. Ensure clearance.\n");
+    wait_enter();
+    if (!adc_ready() || !ledc_ready()) return;
 
-    for (int i = 0; i < 15; i++) {
-        int r = 0, l = 0;
-        adc_oneshot_read(s_adc, MOTOR_IS_CH_R, &r);
-        adc_oneshot_read(s_adc, MOTOR_IS_CH_L, &l);
-        float vr = r * 3.3f / 4095.0f;
-        float vl = l * 3.3f / 4095.0f;
-        float ir = vr / 2200.0f * 8500.0f;
-        float il = vl / 2200.0f * 8500.0f;
-        printf("  [%2d] IS_R: raw=%4d %.3fV %.2fA | IS_L: raw=%4d %.3fV %.2fA\n",
-               i, r, vr, ir, l, vl, il);
-        vTaskDelay(pdMS_TO_TICKS(200));
-    }
-    printf("  PASS if resting values are near 0 (< 50 raw).\n");
-    printf("\n  Now run motor test (3 or 4) and observe IS readings during movement.\n");
-    printf("  Running IS_R (UP channel) during motor UP test should show > 0 raw.\n");
+    printf("\n  --- At rest ---\n");
+    for (int i = 0; i < 5; i++) { is_print_reading(i); vTaskDelay(pdMS_TO_TICKS(200)); }
+
+    printf("\n  --- Motor UP ---\n");
+    motor_run_with_is(true);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    printf("\n  --- At rest ---\n");
+    for (int i = 0; i < 3; i++) { is_print_reading(i); vTaskDelay(pdMS_TO_TICKS(200)); }
+
+    printf("\n  --- Motor DOWN ---\n");
+    motor_run_with_is(false);
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    printf("\n  --- At rest ---\n");
+    for (int i = 0; i < 5; i++) { is_print_reading(i); vTaskDelay(pdMS_TO_TICKS(200)); }
+
+    printf("\n  PASS: rest < 50 raw, movement > 0, no reading >= %d (stall threshold).\n",
+           MOTOR_STALL_THRESHOLD_RAW);
+    printf("  Use the 'full speed' readings to tune MOTOR_STALL_THRESHOLD_RAW.\n");
 }
 
 // ─── TEST 6: Button ADC ───────────────────────────────────────────────────────
@@ -282,7 +341,7 @@ static void test_vl53l0x() {
         .scl_io_num        = PIN_I2C_SCL,
         .clk_source        = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags             = { .enable_internal_pullup = false },
+        .flags             = { .enable_internal_pullup = true },
     };
     i2c_master_bus_handle_t bus;
     if (i2c_new_master_bus(&bus_cfg, &bus) != ESP_OK) {
