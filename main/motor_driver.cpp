@@ -1,261 +1,275 @@
 #include "motor_driver.hpp"
-#include <cmath>
+#include "driver/ledc.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include <cstdlib>
 
-// --- Configuration ---
-// Adjust these based on your specific motor testing
-#define STALL_CHECK_PERIOD_MS    50
-#define STALL_STARTUP_IGNORE_MS  500   // Ignore inrush current for first 0.5s
-#define STALL_THRESHOLD_RAW      2800  // ~2.2V (Assuming 12-bit ADC, 3.3V ref). Calibrate this!
-#define STALL_CONFIRM_COUNT      5     // Must be over threshold for 5 checks (250ms) to trigger
+static const char* TAG = "MotorDriver";
 
-MotorDriver::MotorDriver() : logger_({.tag = "MotorDriver", .level = espp::Logger::Verbosity::INFO}) {
-    // 1. Configure Enable Pins (GPIO)
-    gpio_config_t en_conf = {};
-    en_conf.intr_type = GPIO_INTR_DISABLE;
-    en_conf.mode = GPIO_MODE_OUTPUT;
-    en_conf.pin_bit_mask = (1ULL << PIN_MOTOR_R_EN) | (1ULL << PIN_MOTOR_L_EN);
-    en_conf.pull_down_en = GPIO_PULLDOWN_ENABLE; 
-    en_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-    gpio_config(&en_conf);
-    
-    enable_driver(false);
+// ─── init ────────────────────────────────────────────────────────────────────
 
-    // 2. Configure ADC for Current Sensing
-    // Assuming ADC Unit 1 for simplicity. Check your specific pins in datasheet.
-    adc_oneshot_unit_init_cfg_t init_config1 = {
-        .unit_id = ADC_UNIT_1,
-        .clk_src = ADC_RTC_CLK_SRC_DEFAULT,
+bool MotorDriver::init() {
+    // Enable pins
+    gpio_config_t en_cfg = {
+        .pin_bit_mask = (1ULL << PIN_MOTOR_EN_R) | (1ULL << PIN_MOTOR_EN_L),
+        .mode         = GPIO_MODE_OUTPUT,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
     };
-    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config1, &adc_handle_));
+    if (gpio_config(&en_cfg) != ESP_OK) return false;
+    gpio_set_level(PIN_MOTOR_EN_R, 0);
+    gpio_set_level(PIN_MOTOR_EN_L, 0);
 
-    adc_oneshot_chan_cfg_t config = {
-        .atten = ADC_ATTEN_DB_12, // 11dB or 12dB covers full 3.3V range
+    // LEDC timer
+    ledc_timer_config_t timer_cfg = {
+        .speed_mode      = MOTOR_LEDC_MODE,
+        .duty_resolution = MOTOR_LEDC_RES,
+        .timer_num       = MOTOR_LEDC_TIMER,
+        .freq_hz         = MOTOR_LEDC_FREQ_HZ,
+        .clk_cfg         = LEDC_AUTO_CLK,
+    };
+    if (ledc_timer_config(&timer_cfg) != ESP_OK) return false;
+
+    // Channel R (UP)
+    ledc_channel_config_t ch_r = {
+        .gpio_num   = PIN_MOTOR_PWM_R,
+        .speed_mode = MOTOR_LEDC_MODE,
+        .channel    = MOTOR_LEDC_CH_R,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .timer_sel  = MOTOR_LEDC_TIMER,
+        .duty       = 0,
+        .hpoint     = 0,
+    };
+    if (ledc_channel_config(&ch_r) != ESP_OK) return false;
+
+    // Channel L (DOWN)
+    ledc_channel_config_t ch_l = {
+        .gpio_num   = PIN_MOTOR_PWM_L,
+        .speed_mode = MOTOR_LEDC_MODE,
+        .channel    = MOTOR_LEDC_CH_L,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .timer_sel  = MOTOR_LEDC_TIMER,
+        .duty       = 0,
+        .hpoint     = 0,
+    };
+    if (ledc_channel_config(&ch_l) != ESP_OK) return false;
+
+    // ADC unit (shared with ButtonReader)
+    adc_oneshot_unit_init_cfg_t adc_cfg = {
+        .unit_id  = MOTOR_IS_ADC_UNIT,
+        .clk_src  = ADC_RTC_CLK_SRC_DEFAULT,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    if (adc_oneshot_new_unit(&adc_cfg, &adc_) != ESP_OK) return false;
+
+    adc_oneshot_chan_cfg_t ch_cfg = {
+        .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
-    // Configure both R_IS and L_IS channels
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle_, (adc_channel_t)PIN_MOTOR_R_IS, &config));
-    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc_handle_, (adc_channel_t)PIN_MOTOR_L_IS, &config));
+    if (adc_oneshot_config_channel(adc_, MOTOR_IS_CH_R, &ch_cfg) != ESP_OK) return false;
+    if (adc_oneshot_config_channel(adc_, MOTOR_IS_CH_L, &ch_cfg) != ESP_OK) return false;
 
+    xTaskCreatePinnedToCore(monitor_task, "motor_mon",
+                            TASK_STACK_MOTOR_MON, this,
+                            TASK_PRIO_MOTOR_MON, &monitor_task_handle_,
+                            TASK_CORE_MOTOR_MON);
+    if (!monitor_task_handle_) return false;
 
-    // 3. Configure MCPWM Timer
-    mcpwm_timer_config_t timer_conf = {
-        .group_id = 0,
-        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
-        .resolution_hz = 10 * 1000 * 1000, 
-        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
-        .period_ticks = 10 * 1000 * 1000 / 20000, 
-    };
-    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_conf, &timer_));
-    period_ticks_ = timer_conf.period_ticks;
-
-    // 4. Configure Operator
-    mcpwm_operator_config_t oper_conf = { .group_id = 0 };
-    ESP_ERROR_CHECK(mcpwm_new_operator(&oper_conf, &oper_));
-    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper_, timer_));
-
-    // 5. Configure Comparator
-    mcpwm_comparator_config_t cmpr_conf = { .flags = { .update_cmp_on_tez = true } };
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper_, &cmpr_conf, &comparator_));
-
-    // 6. Configure Generators
-    mcpwm_generator_config_t gen_conf = {};
-    gen_conf.gen_gpio_num = PIN_MOTOR_R_PWM;
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper_, &gen_conf, &gen_r_));
-    gen_conf.gen_gpio_num = PIN_MOTOR_L_PWM;
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper_, &gen_conf, &gen_l_));
-
-    // 7. Start Timer
-    ESP_ERROR_CHECK(mcpwm_timer_enable(timer_));
-    ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer_, MCPWM_TIMER_START_NO_STOP));
-
-    // 8. Start Monitoring Task
-    xTaskCreate(monitor_task_entry, "motor_mon", 4096, this, 5, &monitor_task_handle_);
-
-    logger_.info("Motor Driver Initialized with Stall Detection.");
+    ESP_LOGI(TAG, "Initialized");
+    return true;
 }
 
-MotorDriver::~MotorDriver() {
-    stop();
-    if (monitor_task_handle_) {
-        vTaskDelete(monitor_task_handle_);
-    }
-    if (timer_) {
-        mcpwm_del_timer(timer_);
-    }
-    if (adc_handle_) {
-        adc_oneshot_del_unit(adc_handle_);
-    }
-}
-
-void MotorDriver::register_stall_callback(StallCallback cb) {
-    stall_callback_ = cb;
-}
-
-void MotorDriver::monitor_task_entry(void* arg) {
-    MotorDriver* driver = static_cast<MotorDriver*>(arg);
-    driver->monitor_task_loop();
-}
-
-void MotorDriver::monitor_task_loop() {
-    int stall_counter = 0;
-    
-    while (true) {
-        // Only check if motor is supposedly moving and we aren't already in a stalled state
-        if (current_speed_ != 0.0f && !is_stalled_) {
-            
-            // 1. Check if we are in the "Inrush Ignore" window
-            TickType_t now = xTaskGetTickCount();
-            if (pdTICKS_TO_MS(now - movement_start_tick_) > STALL_STARTUP_IGNORE_MS) {
-                
-                int raw_val = 0;
-                adc_channel_t channel_to_read;
-
-                // 2. Select the channel based on direction
-                // If moving UP (Speed > 0), the Right Half Bridge is active -> Read R_IS
-                // If moving DOWN (Speed < 0), the Left Half Bridge is active -> Read L_IS
-                if (current_speed_ > 0) {
-                    channel_to_read = (adc_channel_t)PIN_MOTOR_R_IS;
-                } else {
-                    channel_to_read = (adc_channel_t)PIN_MOTOR_L_IS;
-                }
-
-                // 3. Read ADC
-                if (adc_oneshot_read(adc_handle_, channel_to_read, &raw_val) == ESP_OK) {
-                    
-                    // 4. Check Threshold
-                    if (raw_val > STALL_THRESHOLD_RAW) {
-                        stall_counter++;
-                        // logger_.warn("High Current: {}", raw_val); // Uncomment for debug
-                    } else {
-                        stall_counter = 0;
-                    }
-
-                    // 5. Trigger Stall
-                    if (stall_counter >= STALL_CONFIRM_COUNT) {
-                        logger_.error("STALL DETECTED! Stopping motor.");
-                        
-                        // Stop physics immediately
-                        stop();
-                        
-                        // Set state
-                        is_stalled_ = true;
-
-                        // Notify App
-                        if (stall_callback_) {
-                            stall_callback_(true);
-                        }
-                    }
-                }
-            }
-        } else {
-            // Not moving, reset counter
-            stall_counter = 0;
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(STALL_CHECK_PERIOD_MS));
-    }
-}
-
-void MotorDriver::enable_driver(bool enable) {
-    int level = enable ? 1 : 0;
-    gpio_set_level(PIN_MOTOR_R_EN, level);
-    gpio_set_level(PIN_MOTOR_L_EN, level);
-}
-
-void MotorDriver::set_speed(float speed) {
-    if (speed > 100.0f) { speed = 100.0f; }
-    if (speed < -100.0f) { speed = -100.0f; }
-    
-    current_speed_ = speed;
-
-    uint32_t duty_ticks = (uint32_t)(std::abs(speed) / 100.0f * period_ticks_);
-    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator_, duty_ticks));
-
-    if (speed > 0.1f) {
-        // UP
-        mcpwm_generator_set_force_level(gen_r_, -1, true); 
-        mcpwm_generator_set_action_on_timer_event(gen_r_, 
-                MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH));
-        mcpwm_generator_set_action_on_compare_event(gen_r_, 
-                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_, MCPWM_GEN_ACTION_LOW));
-
-        mcpwm_generator_set_force_level(gen_l_, 0, true);
-        enable_driver(true);
-
-    } else if (speed < -0.1f) {
-        // DOWN
-        mcpwm_generator_set_force_level(gen_r_, 0, true);
-
-        mcpwm_generator_set_force_level(gen_l_, -1, true); 
-        mcpwm_generator_set_action_on_timer_event(gen_l_, 
-                MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH));
-        mcpwm_generator_set_action_on_compare_event(gen_l_, 
-                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator_, MCPWM_GEN_ACTION_LOW));
-
-        enable_driver(true);
-    } else {
-        // STOP
-        mcpwm_generator_set_force_level(gen_r_, 0, true);
-        mcpwm_generator_set_force_level(gen_l_, 0, true);
-        enable_driver(false);
-    }
-}
+// ─── public commands ─────────────────────────────────────────────────────────
 
 void MotorDriver::move_up() {
-    // If we were stalled, verify if we can clear it.
-    // For now, any new move command attempts to clear the stall state.
-    if (is_stalled_) {
-        is_stalled_ = false;
-        if (stall_callback_) {
-            stall_callback_(false); // Notify app: Stall cleared
-        }
+    portENTER_CRITICAL(&mux_);
+    stalled_ = false;
+    if (motor_state_ == MotorState::RAMPING_UP || motor_state_ == MotorState::RUNNING_UP) {
+        portEXIT_CRITICAL(&mux_);
+        return;
     }
-
-    // Capture start time for inrush protection
-    movement_start_tick_ = xTaskGetTickCount();
-    
-    logger_.info("Moving UP");
-    for (float s = 10.0f; s <= 100.0f; s += 2.0f) {
-        set_speed(s);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    set_speed(100.0f);
+    // Both EN pins must be HIGH so the idle half-bridge provides a GND return
+    // path. Direction is controlled by which PWM channel carries duty > 0;
+    // the idle channel stays at duty=0 (low-side switch closed → GND).
+    gpio_set_level(PIN_MOTOR_EN_R, 1);
+    gpio_set_level(PIN_MOTOR_EN_L, 1);
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R);
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L);
+    current_duty_     = 0;
+    direction_        = MotorDirection::UP;
+    ramp_start_tick_  = xTaskGetTickCount();
+    motor_state_      = MotorState::RAMPING_UP;
+    portEXIT_CRITICAL(&mux_);
+    ESP_LOGI(TAG, "move_up");
 }
 
 void MotorDriver::move_down() {
-    if (is_stalled_) {
-        is_stalled_ = false;
-        if (stall_callback_) {
-            stall_callback_(false); // Notify app: Stall cleared
-        }
+    portENTER_CRITICAL(&mux_);
+    stalled_ = false;
+    if (motor_state_ == MotorState::RAMPING_DOWN || motor_state_ == MotorState::RUNNING_DOWN) {
+        portEXIT_CRITICAL(&mux_);
+        return;
     }
-
-    movement_start_tick_ = xTaskGetTickCount();
-
-    logger_.info("Moving DOWN");
-    for (float s = -10.0f; s >= -100.0f; s -= 2.0f) {
-        set_speed(s);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    set_speed(-100.0f);
+    gpio_set_level(PIN_MOTOR_EN_R, 1);
+    gpio_set_level(PIN_MOTOR_EN_L, 1);
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R);
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L);
+    current_duty_     = 0;
+    direction_        = MotorDirection::DOWN;
+    ramp_start_tick_  = xTaskGetTickCount();
+    motor_state_      = MotorState::RAMPING_DOWN;
+    portEXIT_CRITICAL(&mux_);
+    ESP_LOGI(TAG, "move_down");
 }
 
 void MotorDriver::stop() {
-    logger_.info("Stopping");
-    if (current_speed_ > 0) {
-        for (float s = current_speed_; s >= 0; s -= 5.0f) {
-            set_speed(s);
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    } else if (current_speed_ < 0) {
-        for (float s = current_speed_; s <= 0; s += 5.0f) {
-            set_speed(s);
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
+    portENTER_CRITICAL(&mux_);
+    switch (motor_state_) {
+        case MotorState::STOPPED:
+        case MotorState::STOPPING_FROM_UP:
+        case MotorState::STOPPING_FROM_DOWN:
+            portEXIT_CRITICAL(&mux_);
+            return;
+        case MotorState::RAMPING_UP:
+        case MotorState::RUNNING_UP:
+            motor_state_ = MotorState::STOPPING_FROM_UP;
+            break;
+        case MotorState::RAMPING_DOWN:
+        case MotorState::RUNNING_DOWN:
+            motor_state_ = MotorState::STOPPING_FROM_DOWN;
+            break;
     }
-    set_speed(0.0f);
-    
-    // Note: We do NOT clear is_stalled_ here. 
-    // If stop() was called by the user, that's fine.
-    // If stop() was called by the stall task, is_stalled_ is already true.
+    ramp_start_tick_ = xTaskGetTickCount();
+    portEXIT_CRITICAL(&mux_);
+    ESP_LOGI(TAG, "stop (soft)");
+}
+
+void MotorDriver::emergency_stop() {
+    // Safe from any context — direct register writes only.
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_R);
+    ledc_set_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L, 0);
+    ledc_update_duty(MOTOR_LEDC_MODE, MOTOR_LEDC_CH_L);
+    gpio_set_level(PIN_MOTOR_EN_R, 0);
+    gpio_set_level(PIN_MOTOR_EN_L, 0);
+    current_duty_ = 0;
+    direction_    = MotorDirection::STOPPED;
+    motor_state_  = MotorState::STOPPED;
+    stalled_      = true;
+    ESP_LOGE(TAG, "emergency_stop");
+}
+
+void MotorDriver::set_stall_callback(StallCallback cb) {
+    stall_cb_ = cb;
+}
+
+bool MotorDriver::is_running() const {
+    return motor_state_ == MotorState::RUNNING_UP ||
+           motor_state_ == MotorState::RUNNING_DOWN;
+}
+
+// ─── private ─────────────────────────────────────────────────────────────────
+
+void MotorDriver::set_duty_raw(uint32_t duty, MotorDirection dir) {
+    ledc_channel_t ch = (dir == MotorDirection::UP) ? MOTOR_LEDC_CH_R : MOTOR_LEDC_CH_L;
+    ledc_set_duty(MOTOR_LEDC_MODE, ch, duty);
+    ledc_update_duty(MOTOR_LEDC_MODE, ch);
+    current_duty_ = duty;
+}
+
+void MotorDriver::monitor_task(void* arg) {
+    static_cast<MotorDriver*>(arg)->monitor_loop();
+}
+
+void MotorDriver::monitor_loop() {
+    int stall_counter = 0;
+
+    while (true) {
+        portENTER_CRITICAL(&mux_);
+        MotorState  state = motor_state_;
+        MotorDirection dir = direction_;
+        TickType_t  ramp_tick = ramp_start_tick_;
+        TickType_t  move_tick = move_start_tick_;
+        portEXIT_CRITICAL(&mux_);
+
+        TickType_t now     = xTaskGetTickCount();
+        uint32_t   elapsed = (uint32_t)pdTICKS_TO_MS(now - ramp_tick);
+
+        switch (state) {
+            case MotorState::RAMPING_UP:
+            case MotorState::RAMPING_DOWN: {
+                // Ramp duty 0 → MOTOR_MAX_DUTY over MOTOR_RAMP_MS
+                uint32_t duty = (elapsed >= MOTOR_RAMP_MS)
+                    ? MOTOR_MAX_DUTY
+                    : (elapsed * MOTOR_MAX_DUTY / MOTOR_RAMP_MS);
+                set_duty_raw(duty, dir);
+                if (duty >= MOTOR_MAX_DUTY) {
+                    portENTER_CRITICAL(&mux_);
+                    motor_state_ = (dir == MotorDirection::UP)
+                        ? MotorState::RUNNING_UP
+                        : MotorState::RUNNING_DOWN;
+                    move_start_tick_ = now;
+                    portEXIT_CRITICAL(&mux_);
+                    stall_counter = 0;
+                    ESP_LOGI(TAG, "ramp complete, running");
+                }
+                break;
+            }
+
+            case MotorState::RUNNING_UP:
+            case MotorState::RUNNING_DOWN: {
+                uint32_t move_elapsed = (uint32_t)pdTICKS_TO_MS(now - move_tick);
+                if (move_elapsed > MOTOR_INRUSH_IGNORE_MS) {
+                    adc_channel_t ch = (dir == MotorDirection::UP)
+                        ? MOTOR_IS_CH_R : MOTOR_IS_CH_L;
+                    int raw = 0;
+                    if (adc_oneshot_read(adc_, ch, &raw) == ESP_OK) {
+                        if (raw > MOTOR_STALL_THRESHOLD_RAW) {
+                            stall_counter++;
+                        } else {
+                            stall_counter = 0;
+                        }
+                        if (stall_counter >= MOTOR_STALL_CONFIRM_COUNT) {
+                            ESP_LOGE(TAG, "stall detected (raw=%d)", raw);
+                            emergency_stop();
+                            if (stall_cb_) stall_cb_();
+                            stall_counter = 0;
+                        }
+                    }
+                }
+                break;
+            }
+
+            case MotorState::STOPPING_FROM_UP:
+            case MotorState::STOPPING_FROM_DOWN: {
+                // Ramp duty MOTOR_MAX_DUTY → 0 over MOTOR_RAMP_MS
+                uint32_t duty = (elapsed >= MOTOR_RAMP_MS)
+                    ? 0
+                    : MOTOR_MAX_DUTY - (elapsed * MOTOR_MAX_DUTY / MOTOR_RAMP_MS);
+                set_duty_raw(duty, dir);
+                if (duty == 0) {
+                    gpio_set_level(PIN_MOTOR_EN_R, 0);
+                    gpio_set_level(PIN_MOTOR_EN_L, 0);
+                    portENTER_CRITICAL(&mux_);
+                    motor_state_ = MotorState::STOPPED;
+                    direction_   = MotorDirection::STOPPED;
+                    portEXIT_CRITICAL(&mux_);
+                    stall_counter = 0;
+                    ESP_LOGI(TAG, "stopped");
+                }
+                break;
+            }
+
+            case MotorState::STOPPED:
+                stall_counter = 0;
+                break;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(MOTOR_MON_TASK_MS));
+    }
 }

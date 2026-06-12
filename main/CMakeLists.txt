@@ -1,9 +1,24 @@
-idf_component_register(SRCS 
-  "main.cpp"
-  "motor_driver.cpp"
-  "display_manager.cpp"
-  "ui_manager.cpp"
-  "VL53L0X/VL53L0X.cpp"
-
-   INCLUDE_DIRS "." REQUIRES nvs_flash driver logger lvgl esp_lcd esp_adc)
-
+idf_component_register(
+    SRCS
+        "app_main.cpp"
+        "motor_driver.cpp"
+        "button_reader.cpp"
+        "height_sensor.cpp"
+        "nvs_manager.cpp"
+        "display_manager.cpp"
+        "ui_manager.cpp"
+        "VL53L0X/VL53L0X.cpp"
+    INCLUDE_DIRS
+        "."
+        "VL53L0X"
+    REQUIRES
+        nvs_flash
+        driver
+        esp_lcd
+        esp_adc
+        lvgl
+        esp_timer
+        freertos
+        log
+        esp_system
+)
