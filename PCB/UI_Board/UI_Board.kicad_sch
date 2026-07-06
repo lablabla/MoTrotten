@@ -702,6 +702,145 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Device:C"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 0.254)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "C"
+				(at 0.635 2.54 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left)
+				)
+			)
+			(property "Value" "C"
+				(at 0.635 -2.54 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(justify left)
+				)
+			)
+			(property "Footprint" ""
+				(at 0.9652 -3.81 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "~"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "Unpolarized capacitor"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "cap capacitor"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "C_*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "C_0_1"
+				(polyline
+					(pts
+						(xy -2.032 0.762) (xy 2.032 0.762)
+					)
+					(stroke
+						(width 0.508)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy -2.032 -0.762) (xy 2.032 -0.762)
+					)
+					(stroke
+						(width 0.508)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "C_1_1"
+				(pin passive line
+					(at 0 3.81 270)
+					(length 2.794)
+					(name "~"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 0 -3.81 90)
+					(length 2.794)
+					(name "~"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Device:R"
 			(pin_numbers
 				(hide yes)
@@ -1274,15 +1413,11 @@
 		(color 0 0 0 0)
 		(uuid "4ca560bb-4b61-4f1b-8cd1-560a9038a17f")
 	)
-	(wire
-		(pts
-			(xy 118.11 50.8) (xy 118.11 48.26)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "0336553c-ce54-4569-b6cc-12668f071f18")
+	(junction
+		(at 124.46 45.72)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "6dd367fa-fa27-44c4-a158-de7a9ac5dc26")
 	)
 	(wire
 		(pts
@@ -1406,6 +1541,16 @@
 	)
 	(wire
 		(pts
+			(xy 133.35 57.15) (xy 123.19 57.15)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "5e74a59a-cc4b-4403-9730-9c99871631e3")
+	)
+	(wire
+		(pts
 			(xy 160.02 49.53) (xy 162.56 49.53)
 		)
 		(stroke
@@ -1413,16 +1558,6 @@
 			(type default)
 		)
 		(uuid "6705177b-b373-4f5a-ab0d-c8be949c3d8b")
-	)
-	(wire
-		(pts
-			(xy 114.3 50.8) (xy 118.11 50.8)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "6d58c215-5bdb-4543-9d59-1c60ccab6f62")
 	)
 	(wire
 		(pts
@@ -1436,6 +1571,26 @@
 	)
 	(wire
 		(pts
+			(xy 133.35 49.53) (xy 133.35 45.72)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "72d2d20e-3a1c-4f8e-bf99-b324280d7f0c")
+	)
+	(wire
+		(pts
+			(xy 114.3 45.72) (xy 114.3 50.8)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "9156a0e0-1771-4a6b-9b0a-27f3da78646b")
+	)
+	(wire
+		(pts
 			(xy 181.61 91.44) (xy 181.61 97.79)
 		)
 		(stroke
@@ -1446,7 +1601,17 @@
 	)
 	(wire
 		(pts
-			(xy 114.3 53.34) (xy 116.84 53.34)
+			(xy 114.3 45.72) (xy 124.46 45.72)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "948099c3-abf5-4adf-8d48-ebfb976a0a6a")
+	)
+	(wire
+		(pts
+			(xy 114.3 53.34) (xy 123.19 53.34)
 		)
 		(stroke
 			(width 0)
@@ -1463,6 +1628,16 @@
 			(type default)
 		)
 		(uuid "afeb816f-6e58-4b32-bfdd-82d01a1d8c77")
+	)
+	(wire
+		(pts
+			(xy 133.35 45.72) (xy 124.46 45.72)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ba20f37b-ed10-4532-94a2-78a2ab533690")
 	)
 	(wire
 		(pts
@@ -1483,6 +1658,16 @@
 			(type default)
 		)
 		(uuid "cea8def7-2ead-48a9-8e93-db381aa71ca3")
+	)
+	(wire
+		(pts
+			(xy 123.19 57.15) (xy 123.19 53.34)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d3cc1a33-0bbf-4c87-af5f-6e9021686585")
 	)
 	(wire
 		(pts
@@ -2059,17 +2244,17 @@
 		)
 	)
 	(symbol
-		(lib_id "Mechanical:MountingHole")
-		(at 83.82 34.29 0)
+		(lib_id "Device:C")
+		(at 133.35 53.34 0)
 		(unit 1)
 		(exclude_from_sim no)
-		(in_bom no)
+		(in_bom yes)
 		(on_board yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "4718fda7-3b58-48f5-b344-0c2f2719af93")
-		(property "Reference" "H2"
-			(at 86.36 33.0199 0)
+		(uuid "514f3476-a721-4700-80a7-a73071f17379")
+		(property "Reference" "C1"
+			(at 137.16 52.0699 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2077,8 +2262,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "MountingHole"
-			(at 86.36 35.5599 0)
+		(property "Value" "0.1uF"
+			(at 137.16 54.6099 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2086,8 +2271,8 @@
 				(justify left)
 			)
 		)
-		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
-			(at 83.82 34.29 0)
+		(property "Footprint" "Capacitor_THT:C_Rect_L7.2mm_W3.5mm_P5.00mm_FKS2_FKP2_MKS2_MKP2"
+			(at 134.3152 57.15 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2096,7 +2281,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 83.82 34.29 0)
+			(at 133.35 53.34 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2104,19 +2289,25 @@
 				(hide yes)
 			)
 		)
-		(property "Description" "Mounting Hole without connection"
-			(at 83.82 34.29 0)
+		(property "Description" "Unpolarized capacitor"
+			(at 133.35 53.34 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 				(hide yes)
 			)
+		)
+		(pin "1"
+			(uuid "3d19e94d-2daa-4704-8956-3f814e81f1ed")
+		)
+		(pin "2"
+			(uuid "587af25f-b53a-4ec4-8dce-c6b8ad58ab37")
 		)
 		(instances
-			(project "UI_Board"
+			(project ""
 				(path "/947236bf-2583-4252-8ca1-545b30b49e32"
-					(reference "H2")
+					(reference "C1")
 					(unit 1)
 				)
 			)
@@ -2326,7 +2517,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 118.11 48.26 180)
+		(at 124.46 45.72 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -2335,7 +2526,7 @@
 		(fields_autoplaced yes)
 		(uuid "6603a2b0-69e9-4dd1-9d4b-b6d4b65a04eb")
 		(property "Reference" "#PWR02"
-			(at 118.11 41.91 0)
+			(at 124.46 52.07 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2344,7 +2535,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 118.11 43.18 0)
+			(at 124.46 50.8 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2352,7 +2543,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 118.11 48.26 0)
+			(at 124.46 45.72 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2361,7 +2552,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 118.11 48.26 0)
+			(at 124.46 45.72 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2370,7 +2561,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 118.11 48.26 0)
+			(at 124.46 45.72 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -2451,70 +2642,6 @@
 			(project "UI_Board"
 				(path "/947236bf-2583-4252-8ca1-545b30b49e32"
 					(reference "#PWR05")
-					(unit 1)
-				)
-			)
-		)
-	)
-	(symbol
-		(lib_id "Mechanical:MountingHole")
-		(at 73.66 34.29 0)
-		(unit 1)
-		(exclude_from_sim no)
-		(in_bom no)
-		(on_board yes)
-		(dnp no)
-		(fields_autoplaced yes)
-		(uuid "68741e8d-4868-42f6-9dd4-09bd5ee21d47")
-		(property "Reference" "H1"
-			(at 76.2 33.0199 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Value" "MountingHole"
-			(at 76.2 35.5599 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "MountingHole:MountingHole_3.2mm_M3"
-			(at 73.66 34.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Datasheet" "~"
-			(at 73.66 34.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Description" "Mounting Hole without connection"
-			(at 73.66 34.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(instances
-			(project ""
-				(path "/947236bf-2583-4252-8ca1-545b30b49e32"
-					(reference "H1")
 					(unit 1)
 				)
 			)
