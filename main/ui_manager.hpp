@@ -1,73 +1,71 @@
 #pragma once
 
-#include <vector>
 #include <functional>
-
+#include <vector>
 #include "lvgl.h"
-
-// Enum to define which test to run
-enum class UITest {
-    IDLE,
-    MANUAL_MOVE_UP,
-    MANUAL_MOVE_DOWN,
-};
 
 class UIManager {
 public:
-    UIManager();
+    // Create all LVGL objects. Call once from lvgl_task after display_manager.init().
+    void init();
 
-    // Test functions
-    void test_idle_animation();
-    void test_manual_move_animation(bool is_moving_up);
+    // State transitions. Call via lv_async_call() from app_task.
+    void show_startup(std::function<void()> on_complete);
+    void show_idle(float height_mm);
+    void show_moving_up(float height_mm);
+    void show_moving_down(float height_mm);
+    void show_goto_preset(float current_mm, float target_mm);
+    void show_stalled();
+    void show_calibrating();
+    void show_saved_confirmation();
 
-    void show_idle_state(float height);
-    void start_move_up_animation();
-    void start_move_down_animation();
-    void stop_move_animation();
-
-    void play_startup_animation(std::function<void()> on_complete);
+    // Update height label without changing UI state (during movement).
+    void update_height(float height_mm);
 
 private:
     void init_styles();
-    void configure_and_start_animation(const char* symbol);
+    void configure_and_start_arrow_anim(const char* symbol);
+    void stop_arrow_anim();
+    void update_height_label(float height_mm);
+    void clear_overlay_labels();
 
-    // Animation helpers
-    static void arrow_animation_cb(void *var, int32_t v);
+    // Animation callbacks
+    static void arrow_anim_cb(void* var, int32_t v);
     static void anim_opa_cb(void* var, int32_t v);
-    static void startup_sequence_end_cb(lv_anim_t* a);
-    static void final_cleanup_cb(lv_anim_t* a);
-    void start_arrow_animation(lv_obj_t* arrow, bool up);
-    void update_height_text(float height);
+    static void startup_letter_done_cb(lv_anim_t* a);
+    static void startup_fade_done_cb(lv_anim_t* a);
+    static void stall_timer_cb(lv_timer_t* t);
 
-    // UI elements
-    lv_style_t style_big_text_;
-    lv_style_t style_small_text_;
+    // Height display
+    lv_obj_t* height_label_  = nullptr;
+    lv_obj_t* unit_label_    = nullptr;
 
-    lv_obj_t *height_label_;
-    lv_obj_t *unit_label_;
+    // Arrow animation
+    lv_obj_t* arrow_container_    = nullptr;
+    lv_obj_t* main_arrow_lbl_     = nullptr;
+    lv_obj_t* trail_arrow_1_lbl_  = nullptr;
+    lv_obj_t* trail_arrow_2_lbl_  = nullptr;
+    lv_anim_t arrow_anim_         = {};
+    bool      is_arrow_animating_ = false;
 
-    lv_obj_t* arrow_container_;   // The invisible box holding the arrows
-    lv_obj_t* main_arrow_lbl_;    // The bright, front arrow
-    lv_obj_t* trail_arrow_1_lbl_; // The mediumfade trail
-    lv_obj_t* trail_arrow_2_lbl_; // The lightest fade trail
+    // Overlay labels (goto target, stall, calib, saved)
+    lv_obj_t* overlay_label_ = nullptr;
 
-    lv_anim_t up_down_anim_;      // Handle to control the animation
-    bool is_animating_ = false;   // State tracker
-
-    lv_obj_t* startup_container_;
+    // Startup
+    lv_obj_t*              startup_container_ = nullptr;
     std::vector<lv_obj_t*> letter_labels_;
-    std::function<void()> on_startup_finish_;
-    
+    std::function<void()>  on_startup_finish_;
 
-    // Styles for the cyan color effect
-    lv_style_t style_cyan_bright_;
-    lv_style_t style_cyan_medium_;
+    // Styles
+    lv_style_t style_big_text_    = {};
+    lv_style_t style_small_text_  = {};
+    lv_style_t style_cyan_bright_ = {};
+    lv_style_t style_cyan_medium_ = {};
+    lv_style_t style_cyan_light_  = {};
 
-    lv_style_t style_cyan_light_;
-#ifdef CONFIG_LV_COLOR_16_SWAP // If 16-bit color with byte swap is enabled, cyan is red and vice versa
-    lv_color_t cyan = lv_palette_main(LV_PALETTE_RED);
+#ifdef CONFIG_LV_COLOR_16_SWAP
+    lv_color_t cyan_ = lv_palette_main(LV_PALETTE_RED);
 #else
-    lv_color_t cyan = lv_palette_main(LV_PALETTE_CYAN);
+    lv_color_t cyan_ = lv_palette_main(LV_PALETTE_CYAN);
 #endif
-    
 };

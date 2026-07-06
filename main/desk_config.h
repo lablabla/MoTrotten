@@ -2,52 +2,105 @@
 #define DESK_CONFIG_H
 
 #include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "esp_adc/adc_oneshot.h"
 
-// --- MOTOR SETTINGS ---
-// Capping duty cycle at 850 (out of 1023) simulates ~24V 
-// when using a 29V supply. (24/29 * 1023 ≈ 846)
-#define MOTOR_MAX_DUTY      850  
-#define MOTOR_PWM_FREQ_HZ   15000 // 15kHz is silent (above hearing range)
-#define MOTOR_RAMP_STEP     15    // How fast to accelerate (Soft Start)
+// ─── DISPLAY ────────────────────────────────────────────
+#define PIN_DISP_MOSI       GPIO_NUM_11
+#define PIN_DISP_CLK        GPIO_NUM_12
+#define PIN_DISP_CS         GPIO_NUM_10
+#define PIN_DISP_DC         GPIO_NUM_13
+#define PIN_DISP_RST        GPIO_NUM_14
+#define DISP_SPI_HOST       SPI2_HOST
+#define DISP_SPI_FREQ_HZ    (40 * 1000 * 1000)
+#define DISP_WIDTH          320
+#define DISP_HEIGHT         240
 
-// --- PINS (Modify to match your wiring) ---
-// Motor Driver (BTS7960)
-#define PIN_MOTOR_L_PWM     GPIO_NUM_15
-#define PIN_MOTOR_R_PWM     GPIO_NUM_18
-#define PIN_MOTOR_L_IS      GPIO_NUM_9
-#define PIN_MOTOR_R_IS      GPIO_NUM_10
-#define PIN_MOTOR_L_EN      GPIO_NUM_19 // Up Enable
-#define PIN_MOTOR_R_EN      GPIO_NUM_21 // Down Enable
+// ─── MOTOR ──────────────────────────────────────────────
+#define PIN_MOTOR_PWM_R     GPIO_NUM_15   // LEDC CH0 — UP drive
+#define PIN_MOTOR_PWM_L     GPIO_NUM_16   // LEDC CH1 — DOWN drive
+#define PIN_MOTOR_EN_R      GPIO_NUM_17   // UP half-bridge enable
+#define PIN_MOTOR_EN_L      GPIO_NUM_18   // DOWN half-bridge enable
 
-// I2C Bus (VL53L0X & INA219)
-#define PIN_I2C_SDA         GPIO_NUM_4
-#define PIN_I2C_SCL         GPIO_NUM_5
-#define I2C_ADDR_INA219     0x40
+#define MOTOR_LEDC_TIMER    LEDC_TIMER_0
+#define MOTOR_LEDC_MODE     LEDC_LOW_SPEED_MODE
+#define MOTOR_LEDC_FREQ_HZ  5000
+#define MOTOR_LEDC_RES      LEDC_TIMER_10_BIT  // 0–1023
+#define MOTOR_LEDC_CH_R     LEDC_CHANNEL_0
+#define MOTOR_LEDC_CH_L     LEDC_CHANNEL_1
+#define MOTOR_MAX_DUTY      1023
+#define MOTOR_RAMP_MS       500
 
-// UI Buttons
-#define PIN_BTN_UP          GPIO_NUM_17
-#define PIN_BTN_DOWN        GPIO_NUM_16
-#define PIN_BTN_PRESET_1    GPIO_NUM_27 // Standing Height
-#define PIN_BTN_PRESET_2    GPIO_NUM_26 // Sitting Height
+// ─── CURRENT SENSE ──────────────────────────────────────
+// Hardware: 2.2kΩ drain resistor on BTS7960 IS pins.
+// IS ratio kILIS = 8500 → V_IS = I_load * R_IS / kILIS
+// At 4.4A stall: V_IS = (4.4 / 8500) * 2200 ≈ 1.14V
+// ADC (12-bit, 3.3V ref): 1.14 / 3.3 * 4095 ≈ 1413 raw
+// Threshold set at ~92% of stall (same ratio as 4.7kΩ design).
+// Tune empirically: log raw values during normal movement and set
+// threshold comfortably above that baseline.
+#define PIN_MOTOR_IS_R      GPIO_NUM_1    // ADC1_CH0
+#define PIN_MOTOR_IS_L      GPIO_NUM_2    // ADC1_CH1
+#define MOTOR_IS_ADC_UNIT   ADC_UNIT_1
+#define MOTOR_IS_CH_R       ADC_CHANNEL_0
+#define MOTOR_IS_CH_L       ADC_CHANNEL_1
+#define MOTOR_STALL_THRESHOLD_RAW  1300
+#define MOTOR_STALL_CONFIRM_COUNT  5      // 5 × 50ms = 250ms
+#define MOTOR_MON_TASK_MS          50
+#define MOTOR_INRUSH_IGNORE_MS     500
 
-// --- DISPLAY PINS (ST7789) ---
-#define PIN_DISP_SPI_HOST   SPI2_HOST
-#define PIN_DISP_SPI_MISO   -1 // MISO not used
-#define PIN_DISP_SPI_MOSI   GPIO_NUM_35
-#define PIN_DISP_SPI_SCLK   GPIO_NUM_36
-#define PIN_DISP_SPI_CS     GPIO_NUM_39
-#define PIN_DISP_DC         GPIO_NUM_37
-#define PIN_DISP_RST        GPIO_NUM_38
-#define PIN_DISP_BCKL       -1 // Backlight is not controlled by a dedicated pin
+// ─── I2C / VL53L0X ──────────────────────────────────────
+#define PIN_I2C_SDA         GPIO_NUM_8
+#define PIN_I2C_SCL         GPIO_NUM_9
+#define I2C_PORT            I2C_NUM_0
+#define I2C_FREQ_HZ         400000
+#define VL53L0X_ADDR        0x29
 
-// --- SAFETY & LIMITS ---
-#define DESK_MIN_HEIGHT_MM  650   // Lowest physical height
-#define DESK_MAX_HEIGHT_MM  1200  // Highest physical height
-#define COLLISION_MA        3500  // 3.5 Amps (Tune this during testing!)
+// ─── LIMIT SWITCH ───────────────────────────────────────
+#define PIN_LIMIT_SW        GPIO_NUM_4    // Active low, ext 10kΩ pull-up
 
-// --- MEMORY ---
+// ─── ANALOG BUTTON LADDER ───────────────────────────────
+// 10kΩ pull-up on main board.
+// ADC_ATTEN_DB_12: 0–3.3V → 0–4095 (12-bit)
+#define PIN_ADC_BTN         GPIO_NUM_5
+#define BTN_ADC_CHANNEL     ADC_CHANNEL_4
+#define BTN_NONE_MIN        1600
+#define BTN_UP_MAX          100           // SW1: 0Ω
+#define BTN_DOWN_MIN        250
+#define BTN_DOWN_MAX        500           // SW2: 1kΩ
+#define BTN_PRESET1_MIN     600
+#define BTN_PRESET1_MAX     900           // SW3: 2.2kΩ
+#define BTN_PRESET2_MIN     1150
+#define BTN_PRESET2_MAX     1450          // SW4: 4.7kΩ
+#define BTN_DEBOUNCE_MS     50
+#define BTN_HOLD_SAVE_MS    3000
+
+// ─── DESK LIMITS ────────────────────────────────────────
+#define DESK_MIN_HEIGHT_MM      650
+#define DESK_MAX_HEIGHT_MM      1200
+#define DESK_GOTO_TOLERANCE_MM  5
+#define DESK_DEFAULT_SIT_MM     730
+#define DESK_DEFAULT_STAND_MM   1100
+#define DESK_GOTO_TIMEOUT_MS    60000
+
+// ─── NVS ────────────────────────────────────────────────
 #define NVS_NAMESPACE       "desk_mem"
 #define NVS_KEY_SIT         "h_sit"
 #define NVS_KEY_STAND       "h_stand"
+#define NVS_KEY_CALIB       "h_calib"
 
-#endif
+// ─── CALIBRATION ────────────────────────────────────────
+#define CALIB_TIMEOUT_MS    30000
+
+// ─── TASK CONFIG ────────────────────────────────────────
+#define TASK_STACK_APP      6144
+#define TASK_STACK_LVGL     8192
+#define TASK_STACK_MOTOR_MON 2048
+#define TASK_PRIO_APP       5
+#define TASK_PRIO_LVGL      4
+#define TASK_PRIO_MOTOR_MON 6
+#define TASK_CORE_APP       0
+#define TASK_CORE_LVGL      1
+#define TASK_CORE_MOTOR_MON 0
+
+#endif // DESK_CONFIG_H

@@ -1,28 +1,4 @@
 dependencies:
-  espp/format:
-    component_hash: 9723eeb2cadb7191255337320f51edec7b300c648d98aa4ab92e93365297acc4
-    dependencies:
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 1.0.33
-  espp/logger:
-    component_hash: 91bc16342ba44200df5b56977270921a863e3447d3c94049a75e30b8d515b34d
-    dependencies:
-    - name: espp/format
-      registry_url: https://components.espressif.com
-      require: private
-      version: '>=1.0'
-    - name: idf
-      require: private
-      version: '>=5.0'
-    source:
-      registry_url: https://components.espressif.com/
-      type: service
-    version: 1.0.33
   idf:
     source:
       type: idf
@@ -35,8 +11,7 @@ dependencies:
       type: service
     version: 8.4.0
 direct_dependencies:
-- espp/logger
 - lvgl/lvgl
-manifest_hash: 654e043d2dc0bc4fa10c43a624a80f4a0b68eb0b6f810d935d67fddb307ea81f
+manifest_hash: 2ef34de8875ac72c7cbb7b0817d6c1e76a2360d0d3350874e6a0992af69cb762
 target: esp32s3
 version: 2.0.0
